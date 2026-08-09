@@ -119,9 +119,140 @@ function isProcessingStatusCommand(text: string) {
   return compact.includes("处理进度") || compact.includes("任务进度") || compact.includes("处理状态") || compact.includes("任务状态");
 }
 
+function isProcessingSetupCommand(text: string) {
+  const compact = text.replace(/\s+/g, "").toLowerCase();
+  const hasProcessingGoal =
+    compact.includes("数据处理") ||
+    compact.includes("处理数据") ||
+    compact.includes("dinsar") ||
+    compact.includes("insar") ||
+    compact.includes("gamma") ||
+    compact.includes("哨兵") ||
+    compact.includes("sentinel") ||
+    compact.includes("slc") ||
+    compact.includes("dem");
+  const hasRuntimeCommand =
+    compact.includes("确认开始处理") ||
+    compact.includes("开始处理") ||
+    compact.includes("处理进度") ||
+    compact.includes("任务状态");
+
+  return hasProcessingGoal && !hasRuntimeCommand;
+}
+
 function extractTaskId(text: string) {
   const match = text.match(/\b([A-Za-z0-9_.-]{3,})\b/);
   return match?.[1];
+}
+
+function extractDate(text: string) {
+  return text.match(/\b(20\d{6})\b/)?.[1];
+}
+
+function extractFirstNumberAfter(text: string, keywords: string[]) {
+  for (const keyword of keywords) {
+    const index = text.toLowerCase().indexOf(keyword.toLowerCase());
+    if (index < 0) continue;
+
+    const rest = text.slice(index + keyword.length);
+    const match = rest.match(/[:：=\s]*(\d+)/);
+    if (match) return match[1];
+  }
+
+  return undefined;
+}
+
+function extractAbsolutePaths(text: string) {
+  return Array.from(
+    new Set([
+      ...Array.from(text.matchAll(/(?:~|\/)[^\s，,。；;]+/g)).map((match) => match[0]),
+      ...Array.from(text.matchAll(/(?:^|[\s，,：:=])([A-Za-z]:[\\/][^\s，,。；;]+)/g)).map((match) => match[1]),
+    ]),
+  );
+}
+
+function buildProcessingDraftFromText(text: string) {
+  const inputs: Record<string, string> = {};
+  const notes: string[] = [];
+  const paths = extractAbsolutePaths(text);
+  const lower = text.toLowerCase();
+
+  for (const path of paths) {
+    const before = text.slice(0, Math.max(0, text.indexOf(path))).slice(-24).toLowerCase();
+    const pathLower = path.toLowerCase();
+
+    if (before.includes("dem") || pathLower.includes("dem") || /\.(tif|tiff|hgt|dem)$/i.test(path)) {
+      inputs.dem_file = path;
+      if (!/\.(tif|tiff|hgt|dem)$/i.test(path)) {
+        notes.push("你给出的 DEM 看起来像目录，我先填入 DEM 文件路径字段；如果实际是目录，请改成具体 DEM 文件。");
+      }
+      continue;
+    }
+
+    if (before.includes("zip") || before.includes("数据") || pathLower.includes("zip") || /\.(zip)$/i.test(path)) {
+      inputs.raw_zip_dir = path;
+      continue;
+    }
+
+    if (before.includes("输出") || before.includes("任务") || pathLower.includes("task") || pathLower.includes("work")) {
+      inputs.task_root = path;
+      continue;
+    }
+  }
+
+  const masterDate = extractDate(text);
+  if (masterDate) {
+    inputs.master_date = masterDate;
+  }
+
+  const bnStart = extractFirstNumberAfter(text, ["bn_start1", "burst起始", "burst 起始", "起始burst"]);
+  const bnEnd = extractFirstNumberAfter(text, ["bn_end1", "burst结束", "burst 结束", "结束burst"]);
+  if (bnStart) inputs.bn_start1 = bnStart;
+  if (bnEnd) inputs.bn_end1 = bnEnd;
+
+  if (lower.includes("s1b")) inputs.satellite = "S1B";
+  if (lower.includes("s1a")) inputs.satellite = "S1A";
+  if (lower.includes("vh")) inputs.polarization = "VH";
+  if (lower.includes("vv")) inputs.polarization = "VV";
+
+  const swathMatch = lower.match(/\biw[123]\b/);
+  if (swathMatch) inputs.swath = swathMatch[0].toUpperCase();
+
+  return { inputs, notes };
+}
+
+function formatProcessingSetupGuide(question: string, inputs: Record<string, string>, notes: string[]) {
+  const provided = Object.entries(inputs);
+  const requiredKeys = ["task_root", "raw_zip_dir", "dem_file", "master_date", "bn_start1", "bn_end1"];
+  const missing = requiredKeys.filter((key) => !inputs[key]);
+  const looksLikeTwoScene = /二轨|两轨|两景|二景|2景|2轨/.test(question);
+
+  return [
+    "## 已切换到数据处理引导",
+    "",
+    `我理解你这次是要配置 ${looksLikeTwoScene ? "两景/二轨" : "Sentinel-1"} D-InSAR 数据处理任务。`,
+    "",
+    "拟执行的流程范围：",
+    "",
+    "```text",
+    "生成配置草稿 → 用户检查参数 → 保存 YAML → 确认开始处理 → Linux worker 调用 gamma_dinsar 固定流程",
+    "```",
+    "",
+    provided.length
+      ? ["我已从你的描述中识别并预填：", "", ...provided.map(([key, value]) => `- \`${key}\`：\`${value}\``)].join("\n")
+      : "我还没有从这句话里识别到可直接预填的路径或日期。",
+    "",
+    missing.length
+      ? ["还需要你补充：", "", ...missing.map((key) => `- \`${key}\``)].join("\n")
+      : "基础必填项已经基本齐了，仍建议你在表单里检查每个参数。",
+    "",
+    "我已经打开“处理任务”面板。你可以在表单里检查/修改参数；裁剪参数仍然需要通过预览或人工判断后填写。",
+    notes.length ? ["", "注意：", "", ...notes.map((note) => `- ${note}`)].join("\n") : "",
+    "",
+    "保存任务草稿后，可以点击 `确认开始处理`，也可以在对话框输入 `确认开始处理`。",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function formatProcessingJob(job: ProcessingJobResponse) {
@@ -598,6 +729,7 @@ function App() {
   const [dropNotice, setDropNotice] = useState("");
   const [isCropPreviewOpen, setIsCropPreviewOpen] = useState(false);
   const [isProcessingTaskOpen, setIsProcessingTaskOpen] = useState(false);
+  const [processingDraftInputs, setProcessingDraftInputs] = useState<Record<string, string>>({});
   const [latestProcessingTask, setLatestProcessingTask] = useState<ProcessingTaskResponse | null>(null);
   const [latestProcessingJob, setLatestProcessingJob] = useState<ProcessingJobResponse | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -778,6 +910,15 @@ function App() {
     }
   }
 
+  function handleProcessingSetupFromChat(question: string) {
+    if (!activeSession || isResponding) return;
+
+    const { inputs, notes } = buildProcessingDraftFromText(question);
+    setProcessingDraftInputs(inputs);
+    setIsProcessingTaskOpen(true);
+    appendAssistantExchange(activeSession.id, question, formatProcessingSetupGuide(question, inputs, notes));
+  }
+
   async function sendQuestion(questionText = input) {
     const question = questionText.trim();
     if (!question || !activeSession || isResponding) return;
@@ -789,6 +930,11 @@ function App() {
 
     if (isProcessingStatusCommand(question)) {
       await handleProcessingStatusFromChat(question);
+      return;
+    }
+
+    if (isProcessingSetupCommand(question)) {
+      handleProcessingSetupFromChat(question);
       return;
     }
 
@@ -1127,6 +1273,7 @@ function App() {
       {isProcessingTaskOpen && (
         <ProcessingTaskModal
           onClose={() => setIsProcessingTaskOpen(false)}
+          initialInputs={processingDraftInputs}
           onTaskSaved={setLatestProcessingTask}
           onJobStarted={setLatestProcessingJob}
         />

@@ -25,6 +25,7 @@ import {
 
 interface ProcessingTaskModalProps {
   onClose: () => void;
+  initialInputs?: Record<string, string>;
   onTaskSaved?: (task: ProcessingTaskResponse) => void;
   onJobStarted?: (job: ProcessingJobResponse) => void;
 }
@@ -172,7 +173,7 @@ const JOB_STATUS_LABELS: Record<ProcessingJobResponse["status"], string> = {
   cancelled: "已停止",
 };
 
-export function ProcessingTaskModal({ onClose, onTaskSaved, onJobStarted }: ProcessingTaskModalProps) {
+export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJobStarted }: ProcessingTaskModalProps) {
   const [defaults, setDefaults] = useState<ProcessingDefaultsResponse | null>(null);
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<ProcessingConfigPreviewResponse | null>(null);
@@ -191,7 +192,7 @@ export function ProcessingTaskModal({ onClose, onTaskSaved, onJobStarted }: Proc
         setIsLoading(true);
         const response = await fetchProcessingDefaults();
         if (!alive) return;
-        const nextInputs = buildInitialInputs(response);
+        const nextInputs = { ...buildInitialInputs(response), ...(initialInputs ?? {}) };
         setDefaults(response);
         setInputs(nextInputs);
         setPreview(await previewProcessingConfig(nextInputs));
@@ -209,7 +210,7 @@ export function ProcessingTaskModal({ onClose, onTaskSaved, onJobStarted }: Proc
     return () => {
       alive = false;
     };
-  }, []);
+  }, [initialInputs]);
 
   useEffect(() => {
     if (!isActiveJob(job)) return undefined;
