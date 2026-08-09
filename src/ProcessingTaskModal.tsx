@@ -233,6 +233,10 @@ function isActiveJob(job: ProcessingJobResponse | null) {
   return Boolean(job && ["queued", "running", "cancel_requested"].includes(job.status));
 }
 
+function formatMissingFields(fields: ProcessingFieldInfo[]) {
+  return fields.map((field) => `${field.key}（${field.description}）`).join("\n");
+}
+
 const JOB_STATUS_LABELS: Record<ProcessingJobResponse["status"], string> = {
   queued: "排队中",
   running: "处理中",
@@ -416,6 +420,32 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     setJob(null);
   }
 
+  function applySavedTask(task: ProcessingTaskResponse) {
+    setCreatedTask(task);
+    setJob(null);
+    onTaskSaved?.(task);
+    setPreview({
+      status: task.missing.length ? "needs_input" : "ready",
+      missing: task.missing,
+      config: preview?.config ?? {},
+      effective_parameters: preview?.effective_parameters ?? {},
+      config_yaml: task.config_yaml,
+      workflow: task.workflow,
+      workflow_start: task.workflow_start,
+      workflow_end: task.workflow_end,
+      selected_steps: task.selected_steps,
+      required_field_keys: task.required_field_keys,
+      execution_enabled: task.execution_enabled,
+      safety_notice: task.safety_notice,
+    });
+  }
+
+  async function saveTaskFromInputs() {
+    const task = await createProcessingTask(inputs);
+    applySavedTask(task);
+    return task;
+  }
+
   async function refreshPreview() {
     try {
       setError("");
@@ -432,24 +462,7 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     try {
       setError("");
       setIsSubmitting(true);
-      const task = await createProcessingTask(inputs);
-      setCreatedTask(task);
-      setJob(null);
-      onTaskSaved?.(task);
-      setPreview({
-        status: task.missing.length ? "needs_input" : "ready",
-        missing: task.missing,
-        config: preview?.config ?? {},
-        effective_parameters: preview?.effective_parameters ?? {},
-        config_yaml: task.config_yaml,
-        workflow: task.workflow,
-        workflow_start: task.workflow_start,
-        workflow_end: task.workflow_end,
-        selected_steps: task.selected_steps,
-        required_field_keys: task.required_field_keys,
-        execution_enabled: task.execution_enabled,
-        safety_notice: task.safety_notice,
-      });
+      await saveTaskFromInputs();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
     } finally {
@@ -458,12 +471,22 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
   }
 
   async function startProcessingJob() {
-    if (!createdTask) return;
-
     try {
       setError("");
       setIsSubmitting(true);
-      const nextJob = await createProcessingJob(createdTask.task_id);
+      const task = createdTask ?? (await saveTaskFromInputs());
+
+      if (task.missing.length > 0) {
+        throw new Error(`配置还不完整，不能开始处理。请先补全：\n${formatMissingFields(task.missing)}`);
+      }
+
+      if (!task.execution_enabled) {
+        throw new Error(
+          "后端还没有开启真实处理执行。请在 Linux 的 .env.local 中设置 PROCESSING_EXECUTION_ENABLED=true，并重启 FastAPI 后端。",
+        );
+      }
+
+      const nextJob = await createProcessingJob(task.task_id);
       setJob(nextJob);
       onJobStarted?.(nextJob);
     } catch (jobError) {
@@ -722,17 +745,11 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                 className="primary-action processing-run-action"
                 type="button"
                 onClick={startProcessingJob}
-                disabled={
-                  isSubmitting ||
-                  !createdTask ||
-                  !createdTask.execution_enabled ||
-                  createdTask.missing.length > 0 ||
-                  Boolean(job && job.status !== "failed" && job.status !== "cancelled")
-                }
-                title={!defaults?.execution_enabled ? "后端未开启真实处理执行" : "确认后提交 Linux worker"}
+                disabled={isSubmitting || isActiveJob(job)}
+                title={!defaults?.execution_enabled ? "点击后会提示如何开启真实处理执行" : "保存配置并提交 Linux worker"}
               >
                 {isSubmitting ? <Loader2 size={16} /> : <ServerCog size={16} />}
-                确认开始处理
+                {createdTask ? "确认开始处理" : "保存并开始处理"}
               </button>
               {isActiveJob(job) ? (
                 <button className="icon-text-button stop-job-button" type="button" onClick={stopProcessingJob}>
