@@ -1023,6 +1023,22 @@ button {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.selected-step-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.selected-step-strip span {
+  border: 1px solid #cfe2d9;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #174f3d;
+  background: #f1faf5;
+  font-size: 12px;
+}
+
 .processing-field,
 .missing-field-wrap {
   min-width: 0;
@@ -1074,6 +1090,7 @@ button {
 }
 
 .missing-field-wrap .processing-field input,
+.missing-field-wrap .processing-field select,
 .missing-field-wrap .processing-field textarea {
   border-color: #d99647;
   background: #fffaf1;

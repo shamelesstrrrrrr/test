@@ -130,7 +130,12 @@ function isProcessingSetupCommand(text: string) {
     compact.includes("哨兵") ||
     compact.includes("sentinel") ||
     compact.includes("slc") ||
-    compact.includes("dem");
+    compact.includes("dem") ||
+    compact.includes("差分") ||
+    compact.includes("裁剪") ||
+    compact.includes("配准") ||
+    compact.includes("burst") ||
+    compact.includes("stamps");
   const hasRuntimeCommand =
     compact.includes("确认开始处理") ||
     compact.includes("开始处理") ||
@@ -171,11 +176,140 @@ function extractAbsolutePaths(text: string) {
   );
 }
 
+const PROCESSING_STEP_ORDER = [
+  "unzip_s1",
+  "generate_slc",
+  "extract_burst",
+  "slc_geo",
+  "coregistration",
+  "crop_rslc",
+  "write_rslc_tab",
+  "base_calc",
+  "mk_mli_all",
+  "diff_workflow",
+  "select_shp",
+  "phase_optimization",
+  "file_construct",
+  "point_selection",
+  "stamps_processing",
+] as const;
+
+const PROCESSING_STEP_TITLES: Record<(typeof PROCESSING_STEP_ORDER)[number], string> = {
+  unzip_s1: "解压 Sentinel-1 ZIP",
+  generate_slc: "生成 SLC",
+  extract_burst: "提取 Burst",
+  slc_geo: "主影像地理编码",
+  coregistration: "主从影像配准",
+  crop_rslc: "RSLC 裁剪",
+  write_rslc_tab: "生成 RSLC_tab",
+  base_calc: "生成基线和 itab",
+  mk_mli_all: "生成 RMLI 强度图",
+  diff_workflow: "生成差分干涉图",
+  select_shp: "SHP 同质像元选取",
+  phase_optimization: "相位优化",
+  file_construct: "组织 StaMPS 时序文件",
+  point_selection: "候选点选取",
+  stamps_processing: "StaMPS 处理",
+};
+
+const WORKFLOW_REQUIRED_KEYS: Record<(typeof PROCESSING_STEP_ORDER)[number], string[]> = {
+  unzip_s1: ["task_root", "raw_zip_dir"],
+  generate_slc: ["task_root", "satellite", "polarization", "swath"],
+  extract_burst: ["task_root", "polarization", "swath", "bn_start1", "bn_end1"],
+  slc_geo: ["task_root", "dem_file", "master_date"],
+  coregistration: ["task_root", "polarization", "swath"],
+  crop_rslc: ["task_root", "master_date", "polarization", "swath", "crop_roff", "crop_nr", "crop_loff", "crop_nl"],
+  write_rslc_tab: ["task_root"],
+  base_calc: ["task_root", "master_date"],
+  mk_mli_all: ["task_root"],
+  diff_workflow: ["task_root", "dem_file", "master_date", "diff_method"],
+  select_shp: ["task_root", "master_date", "matlab_func_dir", "shp_method"],
+  phase_optimization: ["task_root", "matlab_func_dir", "phase_opt_method", "shp_method"],
+  file_construct: ["task_root", "master_date"],
+  point_selection: ["task_root", "master_date", "point_selection_method", "matlab_func_dir"],
+  stamps_processing: ["task_root", "stamps_mode"],
+};
+
+function inferWorkflowRange(text: string) {
+  const compact = text.replace(/\s+/g, "").toLowerCase();
+  const wantsSingleStep = /只|仅|重新|重跑|再进行|单独/.test(text);
+
+  let start: (typeof PROCESSING_STEP_ORDER)[number] = "unzip_s1";
+  let end: (typeof PROCESSING_STEP_ORDER)[number] = "stamps_processing";
+
+  if (/完整|全流程|全部|从头/.test(text)) {
+    return { start, end };
+  }
+
+  const matchers: Array<[RegExp, (typeof PROCESSING_STEP_ORDER)[number]]> = [
+    [/解压|zip/i, "unzip_s1"],
+    [/生成slc|slc生成|slc/i, "generate_slc"],
+    [/burst|切片|子带|提取/i, "extract_burst"],
+    [/地理编码|geo/i, "slc_geo"],
+    [/配准|coreg/i, "coregistration"],
+    [/裁剪|crop/i, "crop_rslc"],
+    [/rslc[_\s-]?tab/i, "write_rslc_tab"],
+    [/基线|itab|base/i, "base_calc"],
+    [/rmli|mli/i, "mk_mli_all"],
+    [/差分|干涉图|diff/i, "diff_workflow"],
+    [/shp|同质/i, "select_shp"],
+    [/相位优化|phase/i, "phase_optimization"],
+    [/file_construct|组织.*时序|时序文件/i, "file_construct"],
+    [/点选取|候选点|point|dsc|pds|mt_prep/i, "point_selection"],
+    [/stamps/i, "stamps_processing"],
+  ];
+
+  const matched = matchers.find(([pattern]) => pattern.test(compact) || pattern.test(text));
+  if (!matched) return { start, end };
+
+  end = matched[1];
+  start = wantsSingleStep ? end : start;
+
+  if (/到.*burst|直到.*burst|做到.*burst/.test(compact)) {
+    start = "unzip_s1";
+    end = "extract_burst";
+  }
+
+  if (/从.*裁剪|裁剪后|已有.*裁剪/.test(compact) && !wantsSingleStep) {
+    start = "write_rslc_tab";
+    end = "stamps_processing";
+  }
+
+  return { start, end };
+}
+
+function requiredKeysForWorkflowRange(inputs: Record<string, string>) {
+  const start = inputs.workflow_start;
+  const end = inputs.workflow_end;
+  const startIndex = PROCESSING_STEP_ORDER.indexOf(start as (typeof PROCESSING_STEP_ORDER)[number]);
+  const endIndex = PROCESSING_STEP_ORDER.indexOf(end as (typeof PROCESSING_STEP_ORDER)[number]);
+  const keys: string[] = [];
+
+  if (startIndex < 0 || endIndex < startIndex) return keys;
+
+  for (const step of PROCESSING_STEP_ORDER.slice(startIndex, endIndex + 1)) {
+    for (const key of WORKFLOW_REQUIRED_KEYS[step]) {
+      if (step === "crop_rslc" && inputs.enable_crop === "false" && key.startsWith("crop_")) continue;
+      if (!keys.includes(key)) keys.push(key);
+    }
+  }
+
+  return keys;
+}
+
 function buildProcessingDraftFromText(text: string) {
   const inputs: Record<string, string> = {};
   const notes: string[] = [];
   const paths = extractAbsolutePaths(text);
   const lower = text.toLowerCase();
+  const workflowRange = inferWorkflowRange(text);
+
+  inputs.workflow_start = workflowRange.start;
+  inputs.workflow_end = workflowRange.end;
+
+  if (/不裁剪|无需裁剪|不要裁剪|跳过裁剪/.test(text)) {
+    inputs.enable_crop = "false";
+  }
 
   for (const path of paths) {
     const before = text.slice(0, Math.max(0, text.indexOf(path))).slice(-24).toLowerCase();
@@ -222,10 +356,12 @@ function buildProcessingDraftFromText(text: string) {
 }
 
 function formatProcessingSetupGuide(question: string, inputs: Record<string, string>, notes: string[]) {
-  const provided = Object.entries(inputs);
-  const requiredKeys = ["task_root", "raw_zip_dir", "dem_file", "master_date", "bn_start1", "bn_end1"];
+  const provided = Object.entries(inputs).filter(([key]) => !["workflow_start", "workflow_end"].includes(key));
+  const requiredKeys = requiredKeysForWorkflowRange(inputs);
   const missing = requiredKeys.filter((key) => !inputs[key]);
   const looksLikeTwoScene = /二轨|两轨|两景|二景|2景|2轨/.test(question);
+  const workflowStart = inputs.workflow_start as (typeof PROCESSING_STEP_ORDER)[number];
+  const workflowEnd = inputs.workflow_end as (typeof PROCESSING_STEP_ORDER)[number];
 
   return [
     "## 已切换到数据处理引导",
@@ -235,8 +371,10 @@ function formatProcessingSetupGuide(question: string, inputs: Record<string, str
     "拟执行的流程范围：",
     "",
     "```text",
-    "生成配置草稿 → 用户检查参数 → 保存 YAML → 确认开始处理 → Linux worker 调用 gamma_dinsar 固定流程",
+    `${PROCESSING_STEP_TITLES[workflowStart] ?? workflowStart} → ${PROCESSING_STEP_TITLES[workflowEnd] ?? workflowEnd}`,
     "```",
+    "",
+    "如果这个范围不对，可以在左侧表单顶部改“起始步骤”和“结束步骤”。",
     "",
     provided.length
       ? ["我已从你的描述中识别并预填：", "", ...provided.map(([key, value]) => `- \`${key}\`：\`${value}\``)].join("\n")

@@ -20,6 +20,7 @@ import {
   type ProcessingConfigPreviewResponse,
   type ProcessingDefaultsResponse,
   type ProcessingFieldInfo,
+  type ProcessingStepInfo,
   type ProcessingTaskResponse,
 } from "./services/processingApi";
 
@@ -32,6 +33,8 @@ interface ProcessingTaskModalProps {
 
 const FIELD_LABELS: Record<string, string> = {
   task_id: "任务编号",
+  workflow_start: "起始步骤",
+  workflow_end: "结束步骤",
   task_root: "Linux 任务根目录",
   raw_zip_dir: "Sentinel-1 ZIP 路径",
   dem_file: "DEM 文件路径",
@@ -69,6 +72,28 @@ const HIDDEN_ADVANCED_PARAMETER_KEYS = new Set([
   "qq_mail_to_env",
 ]);
 
+const FALLBACK_PROCESSING_STEPS: ProcessingStepInfo[] = [
+  { key: "unzip_s1", title: "解压 Sentinel-1 ZIP", description: "从原始 ZIP 数据解压。", required_inputs: ["task_root", "raw_zip_dir"] },
+  { key: "generate_slc", title: "生成 SLC", description: "生成 SLC 数据。", required_inputs: ["task_root", "satellite", "polarization", "swath"] },
+  { key: "extract_burst", title: "提取 Burst", description: "提取 burst 范围。", required_inputs: ["task_root", "polarization", "swath", "bn_start1", "bn_end1"] },
+  { key: "slc_geo", title: "主影像地理编码", description: "生成主影像地理编码结果。", required_inputs: ["task_root", "dem_file", "master_date"] },
+  { key: "coregistration", title: "主从影像配准", description: "进行主从影像配准。", required_inputs: ["task_root", "polarization", "swath"] },
+  { key: "crop_rslc", title: "RSLC 裁剪", description: "裁剪 RSLC。", required_inputs: ["task_root", "master_date", "polarization", "swath"] },
+  { key: "write_rslc_tab", title: "生成 RSLC_tab", description: "生成 RSLC_tab。", required_inputs: ["task_root"] },
+  { key: "base_calc", title: "生成基线和 itab", description: "生成基线和 itab。", required_inputs: ["task_root", "master_date"] },
+  { key: "mk_mli_all", title: "生成 RMLI 强度图", description: "生成多视强度图。", required_inputs: ["task_root"] },
+  { key: "diff_workflow", title: "生成差分干涉图", description: "生成差分干涉图。", required_inputs: ["task_root", "dem_file", "master_date", "diff_method"] },
+  { key: "select_shp", title: "SHP 同质像元选取", description: "选取同质像元。", required_inputs: ["task_root", "master_date", "matlab_func_dir", "shp_method"] },
+  { key: "phase_optimization", title: "相位优化", description: "进行相位优化。", required_inputs: ["task_root", "matlab_func_dir", "phase_opt_method", "shp_method"] },
+  { key: "file_construct", title: "组织 StaMPS 时序文件", description: "组织时序文件。", required_inputs: ["task_root", "master_date"] },
+  { key: "point_selection", title: "候选点选取", description: "选取候选点。", required_inputs: ["task_root", "master_date", "point_selection_method"] },
+  { key: "stamps_processing", title: "StaMPS 处理", description: "执行 StaMPS 处理。", required_inputs: ["task_root", "stamps_mode"] },
+];
+
+function processingSteps(defaults: ProcessingDefaultsResponse) {
+  return defaults.processing_steps?.length ? defaults.processing_steps : FALLBACK_PROCESSING_STEPS;
+}
+
 function isPlaceholder(value: unknown) {
   return typeof value === "string" && value.trim().startsWith("<") && value.trim().endsWith(">");
 }
@@ -102,6 +127,50 @@ function formatValue(value: unknown) {
 function fieldsByKeys(fields: ProcessingFieldInfo[], keys: string[]) {
   const byKey = new Map(fields.map((field) => [field.key, field]));
   return keys.map((key) => byKey.get(key)).filter((field): field is ProcessingFieldInfo => Boolean(field));
+}
+
+function addUnique(target: string[], key: string) {
+  if (!target.includes(key)) target.push(key);
+}
+
+function selectedSteps(defaults: ProcessingDefaultsResponse, inputs: Record<string, string>) {
+  const steps = processingSteps(defaults);
+  const start = inputs.workflow_start || steps[0]?.key;
+  const end = inputs.workflow_end || steps.at(-1)?.key;
+  const startIndex = steps.findIndex((step) => step.key === start);
+  const endIndex = steps.findIndex((step) => step.key === end);
+
+  if (startIndex < 0 || endIndex < startIndex) {
+    return steps;
+  }
+
+  return steps.slice(startIndex, endIndex + 1);
+}
+
+function requiredKeysForSelectedSteps(
+  defaults: ProcessingDefaultsResponse,
+  inputs: Record<string, string>,
+  isCropEnabled: boolean,
+) {
+  const keys: string[] = [];
+  const steps = selectedSteps(defaults, inputs);
+
+  for (const step of steps) {
+    step.required_inputs.forEach((key) => addUnique(keys, key));
+
+    if (step.key === "crop_rslc" && isCropEnabled) {
+      defaults.crop_inputs.forEach((field) => addUnique(keys, field.key));
+    }
+
+    if (step.key === "point_selection") {
+      const method = (inputs.point_selection_method || "dsc_pds").toLowerCase();
+      if (["dsc_select", "dsc", "dsc_pds", "pds", "ds"].includes(method)) {
+        addUnique(keys, "matlab_func_dir");
+      }
+    }
+  }
+
+  return keys;
 }
 
 function FieldControl({
@@ -229,25 +298,64 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     return () => window.clearInterval(timer);
   }, [job]);
 
+  useEffect(() => {
+    if (!defaults || isLoading) return undefined;
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setPreview(await previewProcessingConfig(inputs));
+        } catch (previewError) {
+          setError(previewError instanceof Error ? previewError.message : String(previewError));
+        }
+      })();
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [defaults, inputs, isLoading]);
+
   const missingKeys = useMemo(() => new Set(preview?.missing.map((field) => field.key) ?? []), [preview]);
   const allPrimaryFields = useMemo(
     () => [...(defaults?.required_inputs ?? []), ...(defaults?.visible_optional_inputs ?? [])],
     [defaults],
   );
-  const basicFields = useMemo(() => fieldsByKeys(allPrimaryFields, BASIC_INPUT_KEYS), [allPrimaryFields]);
-  const slcFields = useMemo(() => fieldsByKeys(allPrimaryFields, SLC_INPUT_KEYS), [allPrimaryFields]);
-  const methodFields = useMemo(() => fieldsByKeys(allPrimaryFields, METHOD_INPUT_KEYS), [allPrimaryFields]);
   const isCropEnabled = (inputs.enable_crop ?? "").trim().toLowerCase() !== "false";
+  const activeSteps = useMemo(() => (defaults ? selectedSteps(defaults, inputs) : []), [defaults, inputs]);
+  const activeStepKeys = useMemo(() => new Set(activeSteps.map((step) => step.key)), [activeSteps]);
+  const workflowSteps = useMemo(() => (defaults ? processingSteps(defaults) : []), [defaults]);
   const requiredProgressKeys = useMemo(() => {
     if (!defaults) return [];
 
-    const keys = defaults.required_inputs.map((field) => field.key);
-    if (isCropEnabled) {
-      keys.push(...defaults.crop_inputs.map((field) => field.key));
-    }
+    return requiredKeysForSelectedSteps(defaults, inputs, isCropEnabled);
+  }, [defaults, inputs, isCropEnabled]);
+  const activeFieldKeys = useMemo(() => {
+    const keys = [...requiredProgressKeys];
+
+    addUnique(keys, "task_id");
+    addUnique(keys, "env_scripts");
+
+    if (activeStepKeys.has("crop_rslc")) addUnique(keys, "enable_crop");
 
     return keys;
-  }, [defaults, isCropEnabled]);
+  }, [activeStepKeys, requiredProgressKeys]);
+  const basicFields = useMemo(
+    () => fieldsByKeys(allPrimaryFields, BASIC_INPUT_KEYS.filter((key) => activeFieldKeys.includes(key))),
+    [activeFieldKeys, allPrimaryFields],
+  );
+  const slcFields = useMemo(
+    () => fieldsByKeys(allPrimaryFields, SLC_INPUT_KEYS.filter((key) => activeFieldKeys.includes(key))),
+    [activeFieldKeys, allPrimaryFields],
+  );
+  const methodFields = useMemo(
+    () => fieldsByKeys(allPrimaryFields, METHOD_INPUT_KEYS.filter((key) => activeFieldKeys.includes(key))),
+    [activeFieldKeys, allPrimaryFields],
+  );
+  const cropFields = useMemo(
+    () => (activeStepKeys.has("crop_rslc") && isCropEnabled ? (defaults?.crop_inputs ?? []) : []),
+    [activeStepKeys, defaults, isCropEnabled],
+  );
+  const workflowStartIndex = workflowSteps.findIndex((step) => step.key === inputs.workflow_start);
+  const workflowEndOptions = workflowSteps.filter((_, index) => index >= Math.max(0, workflowStartIndex));
   const completedRequiredCount = useMemo(
     () => requiredProgressKeys.filter((key) => hasInputValue(inputs[key])).length,
     [inputs, requiredProgressKeys],
@@ -270,6 +378,9 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
       ...SLC_INPUT_KEYS,
       ...METHOD_INPUT_KEYS,
       ...defaults.crop_inputs.map((field) => field.key),
+      "workflow_start",
+      "workflow_end",
+      "workflow_preset",
     ]);
 
     return defaults.default_groups
@@ -284,6 +395,23 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
 
   function updateInput(key: string, value: string) {
     setInputs((current) => ({ ...current, [key]: value }));
+    setCreatedTask(null);
+    setJob(null);
+  }
+
+  function updateWorkflowStart(value: string) {
+    if (!defaults) {
+      updateInput("workflow_start", value);
+      return;
+    }
+
+    const steps = processingSteps(defaults);
+    const nextStartIndex = steps.findIndex((step) => step.key === value);
+    const currentEnd = inputs.workflow_end || steps.at(-1)?.key || value;
+    const currentEndIndex = steps.findIndex((step) => step.key === currentEnd);
+    const nextEnd = currentEndIndex >= nextStartIndex ? currentEnd : value;
+
+    setInputs((current) => ({ ...current, workflow_start: value, workflow_end: nextEnd }));
     setCreatedTask(null);
     setJob(null);
   }
@@ -314,6 +442,11 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
         config: preview?.config ?? {},
         effective_parameters: preview?.effective_parameters ?? {},
         config_yaml: task.config_yaml,
+        workflow: task.workflow,
+        workflow_start: task.workflow_start,
+        workflow_end: task.workflow_end,
+        selected_steps: task.selected_steps,
+        required_field_keys: task.required_field_keys,
         execution_enabled: task.execution_enabled,
         safety_notice: task.safety_notice,
       });
@@ -389,50 +522,98 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
 
               <div className="processing-section-heading">
                 <ServerCog size={17} />
+                <h3>处理范围</h3>
+              </div>
+              <div className="processing-field-grid">
+                <label className="processing-field">
+                  <span>起始步骤</span>
+                  <select value={inputs.workflow_start ?? ""} onChange={(event) => updateWorkflowStart(event.target.value)}>
+                    {workflowSteps.map((step) => (
+                      <option key={step.key} value={step.key}>
+                        {step.title}
+                      </option>
+                    ))}
+                  </select>
+                  <small>从这个步骤开始执行；前面的结果需要已经存在。</small>
+                </label>
+                <label className="processing-field">
+                  <span>结束步骤</span>
+                  <select value={inputs.workflow_end ?? ""} onChange={(event) => updateInput("workflow_end", event.target.value)}>
+                    {workflowEndOptions.map((step) => (
+                      <option key={step.key} value={step.key}>
+                        {step.title}
+                      </option>
+                    ))}
+                  </select>
+                  <small>运行到这个步骤后停止；只重跑某一步时起止步骤选同一个。</small>
+                </label>
+              </div>
+              <div className="selected-step-strip" aria-label="本次会执行的步骤">
+                {activeSteps.map((step) => (
+                  <span key={step.key}>{step.title}</span>
+                ))}
+              </div>
+
+              <div className="processing-section-heading">
+                <ServerCog size={17} />
                 <h3>基础输入</h3>
               </div>
-              <div className="processing-field-grid">
-                {basicFields.map((field) => (
-                  <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
-                    <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} />
-                  </div>
-                ))}
-              </div>
+              {basicFields.length ? (
+                <div className="processing-field-grid">
+                  {basicFields.map((field) => (
+                    <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
+                      <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} />
+                    </div>
+                  ))}
+                </div>
+              ) : null}
 
-              <div className="processing-section-heading">
-                <FileCheck2 size={17} />
-                <h3>SLC 与 Burst 选择</h3>
-              </div>
-              <div className="processing-field-grid">
-                {slcFields.map((field) => (
-                  <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
-                    <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} />
+              {slcFields.length ? (
+                <>
+                  <div className="processing-section-heading">
+                    <FileCheck2 size={17} />
+                    <h3>SLC 与 Burst 选择</h3>
                   </div>
-                ))}
-              </div>
-
-              <div className="processing-section-heading">
-                <FileCheck2 size={17} />
-                <h3>处理路线</h3>
-              </div>
-              <div className="processing-field-grid">
-                {methodFields.map((field) => (
-                  <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} key={field.key} />
-                ))}
-              </div>
-
-              <div className="processing-section-heading">
-                <FileCheck2 size={17} />
-                <h3>裁剪参数</h3>
-              </div>
-              <p className="section-help">启用裁剪时必须填写。它们应来自裁剪预览或人工判断，不再提供默认裁剪范围。</p>
-              <div className="processing-field-grid compact">
-                {defaults?.crop_inputs.map((field) => (
-                  <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
-                    <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} />
+                  <div className="processing-field-grid">
+                    {slcFields.map((field) => (
+                      <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
+                        <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} />
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              ) : null}
+
+              {methodFields.length ? (
+                <>
+                  <div className="processing-section-heading">
+                    <FileCheck2 size={17} />
+                    <h3>处理方法</h3>
+                  </div>
+                  <div className="processing-field-grid">
+                    {methodFields.map((field) => (
+                      <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} key={field.key} />
+                    ))}
+                  </div>
+                </>
+              ) : null}
+
+              {cropFields.length ? (
+                <>
+                  <div className="processing-section-heading">
+                    <FileCheck2 size={17} />
+                    <h3>裁剪参数</h3>
+                  </div>
+                  <p className="section-help">启用裁剪时必须填写。它们应来自裁剪预览或人工判断，不再提供默认裁剪范围。</p>
+                  <div className="processing-field-grid compact">
+                    {cropFields.map((field) => (
+                      <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
+                        <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : null}
 
               <details className="defaults-details">
                 <summary>高级默认参数，可展开修改</summary>

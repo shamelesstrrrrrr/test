@@ -19,6 +19,21 @@ export interface ProcessingFieldInfo {
   options: string[];
 }
 
+export interface ProcessingStepInfo {
+  key: string;
+  title: string;
+  description: string;
+  required_inputs: string[];
+}
+
+export interface ProcessingWorkflowPreset {
+  key: string;
+  title: string;
+  start_step: string;
+  end_step: string;
+  description: string;
+}
+
 export interface ProcessingDefaultsResponse {
   execution_enabled: boolean;
   safety_notice: string;
@@ -26,6 +41,8 @@ export interface ProcessingDefaultsResponse {
   crop_inputs: ProcessingFieldInfo[];
   visible_optional_inputs: ProcessingFieldInfo[];
   default_groups: ProcessingDefaultGroup[];
+  processing_steps: ProcessingStepInfo[];
+  workflow_presets: ProcessingWorkflowPreset[];
   minimal_template: Record<string, unknown>;
   minimal_template_yaml: string;
 }
@@ -36,6 +53,11 @@ export interface ProcessingConfigPreviewResponse {
   config: Record<string, unknown>;
   effective_parameters: Record<string, unknown>;
   config_yaml: string;
+  workflow: string;
+  workflow_start: string;
+  workflow_end: string;
+  selected_steps: ProcessingStepInfo[];
+  required_field_keys: string[];
   execution_enabled: boolean;
   safety_notice: string;
 }
@@ -48,6 +70,11 @@ export interface ProcessingTaskResponse {
   metadata_path: string;
   missing: ProcessingFieldInfo[];
   config_yaml: string;
+  workflow: string;
+  workflow_start: string;
+  workflow_end: string;
+  selected_steps: ProcessingStepInfo[];
+  required_field_keys: string[];
   execution_enabled: boolean;
   safety_notice: string;
 }
@@ -134,7 +161,7 @@ export async function createProcessingTask(inputs: Record<string, unknown>): Pro
   return parseResponse<ProcessingTaskResponse>(response);
 }
 
-export async function createProcessingJob(taskId: string, workflow = "full"): Promise<ProcessingJobResponse> {
+export async function createProcessingJob(taskId: string, workflow = "configured"): Promise<ProcessingJobResponse> {
   const response = await fetch(`${assistantRuntimeConfig.processingApiBaseUrl}/jobs`, {
     method: "POST",
     headers: {

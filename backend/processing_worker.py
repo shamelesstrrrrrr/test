@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .processing_workflow import resolve_workflow_steps
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AGENT_ROOT = PROJECT_ROOT / "agent"
@@ -17,28 +19,6 @@ for import_path in (AGENT_ROOT, SAR_AGENT_DIR):
     if str(import_path) not in sys.path:
         sys.path.insert(0, str(import_path))
 
-
-WORKFLOW_STEPS: tuple[tuple[str, str, str], ...] = (
-    ("unzip_s1", "解压 Sentinel-1 ZIP", "run_unzip_s1_real"),
-    ("generate_slc", "生成 SLC", "run_generate_slc_real"),
-    ("extract_burst", "提取 Burst", "run_extract_burst_real"),
-    ("slc_geo", "主影像地理编码", "run_slc_geo_real"),
-    ("coregistration", "主从影像配准", "run_slc_coreg_multi_real"),
-    ("crop_rslc", "RSLC 裁剪", "run_slc_copy_crop_all_real"),
-    ("write_rslc_tab", "生成 RSLC_tab", "write_rslc_tab_from_list_real"),
-    ("base_calc", "生成基线和 itab", "run_base_calc_itab_real"),
-    ("mk_mli_all", "生成 RMLI 强度图", "run_mk_mli_all_real"),
-    ("diff_workflow", "生成差分干涉图", "run_diff_workflow_real"),
-    ("select_shp", "SHP 同质像元选取", "run_select_shp_matlab_real"),
-    ("phase_optimization", "相位优化", "run_phase_optimization_workflow_real"),
-    ("file_construct", "组织 StaMPS 时序文件", "run_file_construct_real"),
-    ("point_selection", "候选点选取", "run_point_selection_real"),
-    ("stamps_processing", "StaMPS 处理", "run_stamps_processing_real"),
-)
-
-WORKFLOWS: dict[str, tuple[tuple[str, str, str], ...]] = {
-    "full": WORKFLOW_STEPS,
-}
 
 FAILED_KEYWORDS = (
     "失败",
@@ -113,9 +93,7 @@ def is_failure_output(output: str) -> bool:
 
 
 def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) -> int:
-    steps = WORKFLOWS.get(workflow)
-    if not steps:
-        raise ValueError(f"unsupported workflow: {workflow}")
+    steps = resolve_workflow_steps(workflow)
 
     job = load_job(job_path)
     job["status"] = "running"
@@ -124,8 +102,8 @@ def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) ->
     job["progress_current"] = 0
     job["progress_percent"] = 0
     job["steps"] = [
-        {"key": key, "title": title, "status": "pending", "message": None}
-        for key, title, _method_name in steps
+        {"key": step.key, "title": step.title, "status": "pending", "message": None}
+        for step in steps
     ]
     save_job(job_path, job)
 
@@ -149,11 +127,11 @@ def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) ->
         append_log(log_path, f"[{utc_now()}] job failed while loading config")
         return 1
 
-    for step_key, title, method_name in steps:
-        update_step(job_path, step_key, status="running", current_step=step_key)
-        append_log(log_path, f"\n## {title} ({step_key})")
+    for step in steps:
+        update_step(job_path, step.key, status="running", current_step=step.key)
+        append_log(log_path, f"\n## {step.title} ({step.key})")
 
-        method = getattr(agent_tools, method_name)
+        method = getattr(agent_tools, step.method_name)
         try:
             output = str(method())
         except Exception:
@@ -162,7 +140,7 @@ def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) ->
         append_log(log_path, output)
 
         if is_failure_output(output):
-            update_step(job_path, step_key, status="failed", message=output[-1000:], current_step=step_key)
+            update_step(job_path, step.key, status="failed", message=output[-1000:], current_step=step.key)
             job = load_job(job_path)
             job["status"] = "failed"
             job["return_code"] = 1
@@ -170,10 +148,10 @@ def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) ->
             job["finished_at"] = utc_now()
             job["progress_percent"] = progress_percent(job)
             save_job(job_path, job)
-            append_log(log_path, f"[{utc_now()}] job failed at {step_key}")
+            append_log(log_path, f"[{utc_now()}] job failed at {step.key}")
             return 1
 
-        update_step(job_path, step_key, status="succeeded", message=output[-1000:], current_step=step_key)
+        update_step(job_path, step.key, status="succeeded", message=output[-1000:], current_step=step.key)
 
     job = load_job(job_path)
     job["status"] = "succeeded"

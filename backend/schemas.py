@@ -76,6 +76,21 @@ class ProcessingFieldInfo(BaseModel):
     options: list[str] = Field(default_factory=list)
 
 
+class ProcessingStepInfo(BaseModel):
+    key: str
+    title: str
+    description: str
+    required_inputs: list[str] = Field(default_factory=list)
+
+
+class ProcessingWorkflowPreset(BaseModel):
+    key: str
+    title: str
+    start_step: str
+    end_step: str
+    description: str
+
+
 class ProcessingDefaultsResponse(BaseModel):
     execution_enabled: bool = False
     safety_notice: str
@@ -83,6 +98,8 @@ class ProcessingDefaultsResponse(BaseModel):
     crop_inputs: list[ProcessingFieldInfo]
     visible_optional_inputs: list[ProcessingFieldInfo]
     default_groups: list[ProcessingDefaultGroup]
+    processing_steps: list[ProcessingStepInfo]
+    workflow_presets: list[ProcessingWorkflowPreset]
     minimal_template: dict[str, Any]
     minimal_template_yaml: str
 
@@ -102,6 +119,11 @@ class ProcessingConfigPreviewResponse(BaseModel):
     config: dict[str, Any]
     effective_parameters: dict[str, Any]
     config_yaml: str
+    workflow: str
+    workflow_start: str
+    workflow_end: str
+    selected_steps: list[ProcessingStepInfo]
+    required_field_keys: list[str]
     execution_enabled: bool = False
     safety_notice: str
 
@@ -118,6 +140,11 @@ class ProcessingTaskResponse(BaseModel):
     metadata_path: str
     missing: list[ProcessingMissingField]
     config_yaml: str
+    workflow: str
+    workflow_start: str
+    workflow_end: str
+    selected_steps: list[ProcessingStepInfo]
+    required_field_keys: list[str]
     execution_enabled: bool = False
     safety_notice: str
 
@@ -134,7 +161,7 @@ ProcessingJobStatus = Literal[
 
 class ProcessingJobCreateRequest(BaseModel):
     task_id: str
-    workflow: str = "full"
+    workflow: str = "configured"
 
 
 class ProcessingJobStep(BaseModel):

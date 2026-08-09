@@ -82,11 +82,13 @@ class AgentTools:
         with path.open("r", encoding="utf-8") as handle:
             data = yaml.safe_load(handle) or {}
 
-        result = self.update_task_info(**data)
+        result = self.workflow.update_inputs(**data)
+        if "输入无效" in result:
+            return result
 
         return (
             f"配置文件已读取：{path}\n"
-            f"{result}\n"
+            "配置字段已载入；本次运行范围由 workflow_start/workflow_end 控制。\n"
             "已应用代码默认参数；用户在配置文件中提供的字段会覆盖默认值。\n"
             "如需查看当前实际采用的参数，请调用 get_effective_task_parameters。"
         )

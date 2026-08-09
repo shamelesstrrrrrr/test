@@ -488,6 +488,8 @@ def missing_required_inputs(inputs: dict[str, Any]) -> list[str]:
 def minimal_config_template() -> dict[str, Any]:
     return {
         "task_id": "example_task",
+        "workflow_start": "unzip_s1",
+        "workflow_end": "stamps_processing",
         "task_root": "<TASK_ROOT>",
         "raw_zip_dir": "<SENTINEL_1_ZIP_DIR_OR_FILE>",
         "dem_file": "<DEM_FILE>",

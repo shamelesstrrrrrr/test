@@ -24,6 +24,14 @@ from .schemas import (
     ProcessingJobResponse,
     ProcessingTaskResponse,
 )
+from .processing_workflow import (
+    resolve_workflow_steps,
+    required_field_keys_for_steps,
+    workflow_from_inputs,
+    workflow_preset_payloads,
+    workflow_step_payloads,
+    workflow_to_range,
+)
 
 
 AGENT_DEFAULTS_DIR = PROJECT_ROOT / "agent" / "src" / "gamma_dinsar" / "sar_agent"
@@ -38,7 +46,6 @@ from task_defaults import (  # noqa: E402
     REQUIRED_USER_INPUTS,
     USER_VISIBLE_OPTIONAL_INPUTS,
     minimal_config_template,
-    missing_required_inputs,
     resolve_effective_inputs,
 )
 
@@ -120,11 +127,32 @@ def _field_list(fields: dict[str, str]) -> list[ProcessingFieldInfo]:
     ]
 
 
-def _missing_fields(inputs: dict[str, Any]) -> list[ProcessingMissingField]:
-    descriptions = {**REQUIRED_USER_INPUTS, **CROP_REQUIRED_INPUTS}
+def _field_descriptions() -> dict[str, str]:
+    descriptions = {**REQUIRED_USER_INPUTS, **CROP_REQUIRED_INPUTS, **USER_VISIBLE_OPTIONAL_INPUTS}
+    descriptions.update(
+        {
+            "workflow_start": "本次处理的起始步骤。",
+            "workflow_end": "本次处理的结束步骤。",
+            "workflow_preset": "预设处理范围；留空时使用起止步骤。",
+        }
+    )
+    for group in DEFAULT_PARAMETER_GROUPS.values():
+        for key, (_value, description) in group.items():
+            descriptions.setdefault(key, description)
+    return descriptions
+
+
+def _step_payloads_for_workflow(workflow: str) -> list[dict[str, Any]]:
+    keys = {step.key for step in resolve_workflow_steps(workflow)}
+    return [step for step in workflow_step_payloads() if step["key"] in keys]
+
+
+def _missing_fields(inputs: dict[str, Any], required_field_keys: list[str]) -> list[ProcessingMissingField]:
+    descriptions = _field_descriptions()
     return [
-        ProcessingMissingField(key=key, description=descriptions[key])
-        for key in missing_required_inputs(inputs)
+        ProcessingMissingField(key=key, description=descriptions.get(key, key))
+        for key in required_field_keys
+        if not inputs.get(key)
     ]
 
 
@@ -155,6 +183,8 @@ def get_processing_defaults(settings: BackendSettings) -> ProcessingDefaultsResp
         crop_inputs=_field_list(CROP_REQUIRED_INPUTS),
         visible_optional_inputs=_field_list(USER_VISIBLE_OPTIONAL_INPUTS),
         default_groups=default_groups,
+        processing_steps=workflow_step_payloads(),
+        workflow_presets=workflow_preset_payloads(),
         minimal_template=template,
         minimal_template_yaml=_dump_yaml(template),
     )
@@ -169,7 +199,11 @@ def preview_processing_config(settings: BackendSettings, inputs: dict[str, Any])
         config[key] = value
 
     effective_parameters = resolve_effective_inputs(normalized)
-    missing = _missing_fields(normalized)
+    workflow = workflow_from_inputs(config)
+    workflow_start, workflow_end = workflow_to_range(workflow)
+    selected_steps = resolve_workflow_steps(workflow)
+    required_field_keys = required_field_keys_for_steps(selected_steps, effective_parameters)
+    missing = _missing_fields(effective_parameters, required_field_keys)
 
     return ProcessingConfigPreviewResponse(
         status="needs_input" if missing else "ready",
@@ -177,6 +211,11 @@ def preview_processing_config(settings: BackendSettings, inputs: dict[str, Any])
         config=config,
         effective_parameters=effective_parameters,
         config_yaml=_dump_yaml(config),
+        workflow=workflow,
+        workflow_start=workflow_start,
+        workflow_end=workflow_end,
+        selected_steps=_step_payloads_for_workflow(workflow),
+        required_field_keys=required_field_keys,
         execution_enabled=settings.processing_execution_enabled,
         safety_notice=_safety_notice(settings),
     )
@@ -222,6 +261,11 @@ def create_processing_task(settings: BackendSettings, inputs: dict[str, Any]) ->
         "execution_enabled": settings.processing_execution_enabled,
         "safety_notice": _safety_notice(settings),
         "missing": [field.model_dump() for field in preview.missing],
+        "workflow": preview.workflow,
+        "workflow_start": preview.workflow_start,
+        "workflow_end": preview.workflow_end,
+        "selected_steps": [step.model_dump() for step in preview.selected_steps],
+        "required_field_keys": preview.required_field_keys,
         "config_path": str(config_path),
         "metadata_path": str(metadata_path),
     }
@@ -235,6 +279,11 @@ def create_processing_task(settings: BackendSettings, inputs: dict[str, Any]) ->
         metadata_path=str(metadata_path),
         missing=preview.missing,
         config_yaml=preview.config_yaml,
+        workflow=preview.workflow,
+        workflow_start=preview.workflow_start,
+        workflow_end=preview.workflow_end,
+        selected_steps=preview.selected_steps,
+        required_field_keys=preview.required_field_keys,
         execution_enabled=settings.processing_execution_enabled,
         safety_notice=_safety_notice(settings),
     )
@@ -251,6 +300,14 @@ def read_processing_task(settings: BackendSettings, task_id: str) -> ProcessingT
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     missing = [ProcessingMissingField(**field) for field in metadata.get("missing", [])]
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    workflow = metadata.get("workflow") or workflow_from_inputs(config)
+    workflow_start, workflow_end = workflow_to_range(workflow)
+    selected_steps = metadata.get("selected_steps") or _step_payloads_for_workflow(workflow)
+    required_field_keys = metadata.get("required_field_keys") or required_field_keys_for_steps(
+        resolve_workflow_steps(workflow),
+        resolve_effective_inputs(_normalize_inputs(config)),
+    )
 
     return ProcessingTaskResponse(
         task_id=metadata["task_id"],
@@ -260,6 +317,11 @@ def read_processing_task(settings: BackendSettings, task_id: str) -> ProcessingT
         metadata_path=str(metadata_path),
         missing=missing,
         config_yaml=config_path.read_text(encoding="utf-8"),
+        workflow=workflow,
+        workflow_start=workflow_start,
+        workflow_end=workflow_end,
+        selected_steps=selected_steps,
+        required_field_keys=required_field_keys,
         execution_enabled=metadata.get("execution_enabled", settings.processing_execution_enabled),
         safety_notice=metadata.get("safety_notice", _safety_notice(settings)),
     )
@@ -290,15 +352,32 @@ def _read_job(settings: BackendSettings, job_path: Path) -> ProcessingJobRespons
     return ProcessingJobResponse(**data)
 
 
-def create_processing_job(settings: BackendSettings, task_id: str, workflow: str = "full") -> ProcessingJobResponse:
+def _resolved_workflow_for_task(task: ProcessingTaskResponse, workflow: str) -> str:
+    if workflow and workflow != "configured":
+        workflow_to_range(workflow)
+        return workflow
+    return task.workflow
+
+
+def _missing_for_task_workflow(task: ProcessingTaskResponse, workflow: str) -> list[ProcessingMissingField]:
+    config = yaml.safe_load(Path(task.config_path).read_text(encoding="utf-8")) or {}
+    effective = resolve_effective_inputs(_normalize_inputs(config))
+    required_keys = required_field_keys_for_steps(resolve_workflow_steps(workflow), effective)
+    return _missing_fields(effective, required_keys)
+
+
+def create_processing_job(settings: BackendSettings, task_id: str, workflow: str = "configured") -> ProcessingJobResponse:
     if not settings.processing_execution_enabled:
         raise RuntimeError("真实处理未开启：请在后端环境变量中设置 PROCESSING_EXECUTION_ENABLED=true 后重启 FastAPI。")
 
     task = read_processing_task(settings, task_id)
     if task is None:
         raise FileNotFoundError("processing task not found")
-    if task.missing:
-        missing = ", ".join(field.key for field in task.missing)
+
+    resolved_workflow = _resolved_workflow_for_task(task, workflow)
+    missing_fields = _missing_for_task_workflow(task, resolved_workflow)
+    if missing_fields:
+        missing = ", ".join(field.key for field in missing_fields)
         raise ValueError(f"配置仍有缺失字段，不能开始处理：{missing}")
 
     task_dir = Path(task.task_dir)
@@ -312,7 +391,7 @@ def create_processing_job(settings: BackendSettings, task_id: str, workflow: str
         "job_id": job_id,
         "task_id": task.task_id,
         "status": "queued",
-        "workflow": workflow,
+        "workflow": resolved_workflow,
         "progress_current": 0,
         "progress_total": 0,
         "progress_percent": 0,
@@ -344,7 +423,7 @@ def create_processing_job(settings: BackendSettings, task_id: str, workflow: str
         "--log-path",
         str(log_path),
         "--workflow",
-        workflow,
+        resolved_workflow,
     ]
 
     log_handle = log_path.open("a", encoding="utf-8")
