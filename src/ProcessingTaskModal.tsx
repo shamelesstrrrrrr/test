@@ -74,20 +74,20 @@ const HIDDEN_ADVANCED_PARAMETER_KEYS = new Set([
 
 const FALLBACK_PROCESSING_STEPS: ProcessingStepInfo[] = [
   { key: "unzip_s1", title: "解压 Sentinel-1 ZIP", description: "从原始 ZIP 数据解压。", required_inputs: ["task_root", "raw_zip_dir"] },
-  { key: "generate_slc", title: "生成 SLC", description: "生成 SLC 数据。", required_inputs: ["task_root", "satellite", "polarization", "swath"] },
-  { key: "extract_burst", title: "提取 Burst", description: "提取 burst 范围。", required_inputs: ["task_root", "polarization", "swath", "bn_start1", "bn_end1"] },
-  { key: "slc_geo", title: "主影像地理编码", description: "生成主影像地理编码结果。", required_inputs: ["task_root", "dem_file", "master_date"] },
-  { key: "coregistration", title: "主从影像配准", description: "进行主从影像配准。", required_inputs: ["task_root", "polarization", "swath"] },
-  { key: "crop_rslc", title: "RSLC 裁剪", description: "裁剪 RSLC。", required_inputs: ["task_root", "master_date", "polarization", "swath"] },
+  { key: "generate_slc", title: "生成 SLC", description: "生成 SLC 数据。", required_inputs: ["task_root", "env_scripts", "satellite", "polarization", "swath"] },
+  { key: "extract_burst", title: "提取 Burst", description: "提取 burst 范围。", required_inputs: ["task_root", "env_scripts", "polarization", "swath", "bn_start1", "bn_end1"] },
+  { key: "slc_geo", title: "主影像地理编码", description: "生成主影像地理编码结果。", required_inputs: ["task_root", "env_scripts", "dem_file", "master_date"] },
+  { key: "coregistration", title: "主从影像配准", description: "进行主从影像配准。", required_inputs: ["task_root", "env_scripts", "polarization", "swath"] },
+  { key: "crop_rslc", title: "RSLC 裁剪", description: "裁剪 RSLC。", required_inputs: ["task_root", "env_scripts", "master_date", "polarization", "swath"] },
   { key: "write_rslc_tab", title: "生成 RSLC_tab", description: "生成 RSLC_tab。", required_inputs: ["task_root"] },
-  { key: "base_calc", title: "生成基线和 itab", description: "生成基线和 itab。", required_inputs: ["task_root", "master_date"] },
-  { key: "mk_mli_all", title: "生成 RMLI 强度图", description: "生成多视强度图。", required_inputs: ["task_root"] },
-  { key: "diff_workflow", title: "生成差分干涉图", description: "生成差分干涉图。", required_inputs: ["task_root", "dem_file", "master_date", "diff_method"] },
-  { key: "select_shp", title: "SHP 同质像元选取", description: "选取同质像元。", required_inputs: ["task_root", "master_date", "matlab_func_dir", "shp_method"] },
-  { key: "phase_optimization", title: "相位优化", description: "进行相位优化。", required_inputs: ["task_root", "matlab_func_dir", "phase_opt_method", "shp_method"] },
-  { key: "file_construct", title: "组织 StaMPS 时序文件", description: "组织时序文件。", required_inputs: ["task_root", "master_date"] },
-  { key: "point_selection", title: "候选点选取", description: "选取候选点。", required_inputs: ["task_root", "master_date", "point_selection_method"] },
-  { key: "stamps_processing", title: "StaMPS 处理", description: "执行 StaMPS 处理。", required_inputs: ["task_root", "stamps_mode"] },
+  { key: "base_calc", title: "生成基线和 itab", description: "生成基线和 itab。", required_inputs: ["task_root", "env_scripts", "master_date"] },
+  { key: "mk_mli_all", title: "生成 RMLI 强度图", description: "生成多视强度图。", required_inputs: ["task_root", "env_scripts"] },
+  { key: "diff_workflow", title: "生成差分干涉图", description: "生成差分干涉图。", required_inputs: ["task_root", "env_scripts", "dem_file", "master_date", "diff_method"] },
+  { key: "select_shp", title: "SHP 同质像元选取", description: "选取同质像元。", required_inputs: ["task_root", "env_scripts", "master_date", "matlab_func_dir", "shp_method"] },
+  { key: "phase_optimization", title: "相位优化", description: "进行相位优化。", required_inputs: ["task_root", "env_scripts", "matlab_func_dir", "phase_opt_method", "shp_method"] },
+  { key: "file_construct", title: "组织 StaMPS 时序文件", description: "组织时序文件。", required_inputs: ["task_root", "env_scripts", "master_date"] },
+  { key: "point_selection", title: "候选点选取", description: "选取候选点。", required_inputs: ["task_root", "env_scripts", "master_date", "point_selection_method"] },
+  { key: "stamps_processing", title: "StaMPS 处理", description: "执行 StaMPS 处理。", required_inputs: ["task_root", "env_scripts", "stamps_mode"] },
 ];
 
 function processingSteps(defaults: ProcessingDefaultsResponse) {

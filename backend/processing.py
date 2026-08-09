@@ -95,12 +95,20 @@ def _normalize_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
     for key, value in inputs.items():
         if key == "env_scripts":
             if isinstance(value, str):
-                items = [item.strip() for item in re.split(r"[\n,;]+", value) if item.strip()]
+                items = [
+                    item.strip()
+                    for item in re.split(r"[\n,;]+", value)
+                    if item.strip() and not _is_placeholder(item.strip())
+                ]
                 if items:
                     normalized[key] = items
                 continue
             if isinstance(value, list):
-                items = [str(item).strip() for item in value if str(item).strip()]
+                items = [
+                    str(item).strip()
+                    for item in value
+                    if str(item).strip() and not _is_placeholder(str(item).strip())
+                ]
                 if items:
                     normalized[key] = items
                 continue
@@ -360,10 +368,22 @@ def _resolved_workflow_for_task(task: ProcessingTaskResponse, workflow: str) -> 
 
 
 def _missing_for_task_workflow(task: ProcessingTaskResponse, workflow: str) -> list[ProcessingMissingField]:
-    config = yaml.safe_load(Path(task.config_path).read_text(encoding="utf-8")) or {}
-    effective = resolve_effective_inputs(_normalize_inputs(config))
+    effective = _effective_inputs_for_task(task)
     required_keys = required_field_keys_for_steps(resolve_workflow_steps(workflow), effective)
     return _missing_fields(effective, required_keys)
+
+
+def _effective_inputs_for_task(task: ProcessingTaskResponse) -> dict[str, Any]:
+    config = yaml.safe_load(Path(task.config_path).read_text(encoding="utf-8")) or {}
+    return resolve_effective_inputs(_normalize_inputs(config))
+
+
+def _job_log_path_for_task(task: ProcessingTaskResponse, job_id: str) -> Path:
+    effective = _effective_inputs_for_task(task)
+    task_root = effective.get("task_root")
+    if task_root:
+        return Path(str(task_root)).expanduser() / "logs" / "processing_jobs" / job_id / "job.log"
+    return Path(task.task_dir) / "jobs" / job_id / "job.log"
 
 
 def create_processing_job(settings: BackendSettings, task_id: str, workflow: str = "configured") -> ProcessingJobResponse:
@@ -385,7 +405,8 @@ def create_processing_job(settings: BackendSettings, task_id: str, workflow: str
     job_dir = task_dir / "jobs" / job_id
     job_dir.mkdir(parents=True, exist_ok=False)
     job_path = job_dir / "job.json"
-    log_path = job_dir / "job.log"
+    log_path = _job_log_path_for_task(task, job_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     job_data: dict[str, Any] = {
         "job_id": job_id,

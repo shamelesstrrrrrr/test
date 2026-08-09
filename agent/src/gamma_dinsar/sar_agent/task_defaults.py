@@ -246,8 +246,25 @@ def _flatten_defaults() -> dict[str, Any]:
 DEFAULT_TASK_PARAMETERS = _flatten_defaults()
 
 
+def _is_placeholder(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    return stripped.startswith("<") and stripped.endswith(">")
+
+
 def _clean_user_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in inputs.items() if value is not None}
+    cleaned: dict[str, Any] = {}
+    for key, value in inputs.items():
+        if value is None or _is_placeholder(value):
+            continue
+        if isinstance(value, list):
+            items = [item for item in value if item is not None and not _is_placeholder(str(item))]
+            if items:
+                cleaned[key] = items
+            continue
+        cleaned[key] = value
+    return cleaned
 
 
 def _normalize_option(value: Any, options: dict[str, str], field_name: str) -> str:
@@ -349,7 +366,11 @@ def _format_value(value: Any) -> str:
 
 
 def _has_value(value: Any) -> bool:
-    return value is not None and str(value).strip() != ""
+    if value is None or _is_placeholder(value):
+        return False
+    if isinstance(value, list):
+        return any(_has_value(item) for item in value)
+    return str(value).strip() != ""
 
 
 def _is_crop_enabled(value: Any) -> bool:

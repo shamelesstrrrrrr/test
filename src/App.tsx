@@ -214,20 +214,20 @@ const PROCESSING_STEP_TITLES: Record<(typeof PROCESSING_STEP_ORDER)[number], str
 
 const WORKFLOW_REQUIRED_KEYS: Record<(typeof PROCESSING_STEP_ORDER)[number], string[]> = {
   unzip_s1: ["task_root", "raw_zip_dir"],
-  generate_slc: ["task_root", "satellite", "polarization", "swath"],
-  extract_burst: ["task_root", "polarization", "swath", "bn_start1", "bn_end1"],
-  slc_geo: ["task_root", "dem_file", "master_date"],
-  coregistration: ["task_root", "polarization", "swath"],
-  crop_rslc: ["task_root", "master_date", "polarization", "swath", "crop_roff", "crop_nr", "crop_loff", "crop_nl"],
+  generate_slc: ["task_root", "env_scripts", "satellite", "polarization", "swath"],
+  extract_burst: ["task_root", "env_scripts", "polarization", "swath", "bn_start1", "bn_end1"],
+  slc_geo: ["task_root", "env_scripts", "dem_file", "master_date"],
+  coregistration: ["task_root", "env_scripts", "polarization", "swath"],
+  crop_rslc: ["task_root", "env_scripts", "master_date", "polarization", "swath", "crop_roff", "crop_nr", "crop_loff", "crop_nl"],
   write_rslc_tab: ["task_root"],
-  base_calc: ["task_root", "master_date"],
-  mk_mli_all: ["task_root"],
-  diff_workflow: ["task_root", "dem_file", "master_date", "diff_method"],
-  select_shp: ["task_root", "master_date", "matlab_func_dir", "shp_method"],
-  phase_optimization: ["task_root", "matlab_func_dir", "phase_opt_method", "shp_method"],
-  file_construct: ["task_root", "master_date"],
-  point_selection: ["task_root", "master_date", "point_selection_method", "matlab_func_dir"],
-  stamps_processing: ["task_root", "stamps_mode"],
+  base_calc: ["task_root", "env_scripts", "master_date"],
+  mk_mli_all: ["task_root", "env_scripts"],
+  diff_workflow: ["task_root", "env_scripts", "dem_file", "master_date", "diff_method"],
+  select_shp: ["task_root", "env_scripts", "master_date", "matlab_func_dir", "shp_method"],
+  phase_optimization: ["task_root", "env_scripts", "matlab_func_dir", "phase_opt_method", "shp_method"],
+  file_construct: ["task_root", "env_scripts", "master_date"],
+  point_selection: ["task_root", "env_scripts", "master_date", "point_selection_method", "matlab_func_dir"],
+  stamps_processing: ["task_root", "env_scripts", "stamps_mode"],
 };
 
 function inferWorkflowRange(text: string) {
