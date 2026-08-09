@@ -120,6 +120,26 @@ export interface ProcessingJobResponse {
   safety_notice: string;
 }
 
+export interface ProcessingFileBrowserRoot {
+  name: string;
+  path: string;
+}
+
+export interface ProcessingFileBrowserEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size?: number | null;
+  modified_at?: string | null;
+}
+
+export interface ProcessingFileBrowserResponse {
+  current_path: string;
+  parent_path?: string | null;
+  roots: ProcessingFileBrowserRoot[];
+  entries: ProcessingFileBrowserEntry[];
+}
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }
@@ -180,6 +200,13 @@ async function fetchProcessingApi<T>(path: string, init?: RequestInit): Promise<
 
 export async function fetchProcessingDefaults(): Promise<ProcessingDefaultsResponse> {
   return fetchProcessingApi<ProcessingDefaultsResponse>("/defaults");
+}
+
+export async function browseProcessingFiles(path?: string): Promise<ProcessingFileBrowserResponse> {
+  const params = new URLSearchParams();
+  if (path?.trim()) params.set("path", path.trim());
+  const query = params.toString();
+  return fetchProcessingApi<ProcessingFileBrowserResponse>(`/files${query ? `?${query}` : ""}`);
 }
 
 export async function previewProcessingConfig(

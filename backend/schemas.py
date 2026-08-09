@@ -195,3 +195,23 @@ class ProcessingJobResponse(BaseModel):
     finished_at: str | None = None
     execution_enabled: bool = False
     safety_notice: str
+
+
+class ProcessingFileBrowserRoot(BaseModel):
+    name: str
+    path: str
+
+
+class ProcessingFileBrowserEntry(BaseModel):
+    name: str
+    path: str
+    is_dir: bool
+    size: int | None = None
+    modified_at: str | None = None
+
+
+class ProcessingFileBrowserResponse(BaseModel):
+    current_path: str
+    parent_path: str | None = None
+    roots: list[ProcessingFileBrowserRoot]
+    entries: list[ProcessingFileBrowserEntry]

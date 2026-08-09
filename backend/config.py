@@ -46,6 +46,34 @@ def _resolve_path(value: str, default: str) -> Path:
     return PROJECT_ROOT / candidate
 
 
+def _env_path_list(name: str) -> tuple[Path, ...]:
+    raw = _env(name)
+    if not raw:
+        return ()
+    return tuple(Path(item.strip()).expanduser() for item in raw.replace("\n", ",").replace(";", ",").split(",") if item.strip())
+
+
+def _default_file_browser_roots() -> tuple[Path, ...]:
+    candidates = [
+        Path.home(),
+        PROJECT_ROOT,
+        Path("/home"),
+        Path("/mnt"),
+        Path("/data"),
+        Path("/opt"),
+        Path("/tmp"),
+    ]
+    roots: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.expanduser().resolve()
+        except OSError:
+            continue
+        if resolved.exists() and resolved not in roots:
+            roots.append(resolved)
+    return tuple(roots)
+
+
 @dataclass(frozen=True)
 class BackendSettings:
     allowed_origins: tuple[str, ...]
@@ -82,6 +110,7 @@ class BackendSettings:
     request_timeout_seconds: int
     processing_tasks_dir: Path
     processing_execution_enabled: bool
+    processing_file_browser_roots: tuple[Path, ...]
 
 
 def get_settings() -> BackendSettings:
@@ -135,4 +164,5 @@ def get_settings() -> BackendSettings:
         request_timeout_seconds=_env_int("RAG_REQUEST_TIMEOUT_SECONDS", 90),
         processing_tasks_dir=_resolve_path(_env("PROCESSING_TASKS_DIR"), "runtime/processing_tasks"),
         processing_execution_enabled=_env_bool("PROCESSING_EXECUTION_ENABLED", False),
+        processing_file_browser_roots=_env_path_list("PROCESSING_FILE_BROWSER_ROOTS") or _default_file_browser_roots(),
     )

@@ -4,12 +4,14 @@ import {
   Check,
   Copy,
   FileCheck2,
+  FolderOpen,
   Loader2,
   Save,
   ServerCog,
   X,
 } from "lucide-react";
 import {
+  browseProcessingFiles,
   cancelProcessingJob,
   createProcessingTask,
   createProcessingJob,
@@ -19,6 +21,8 @@ import {
   type ProcessingJobResponse,
   type ProcessingConfigPreviewResponse,
   type ProcessingDefaultsResponse,
+  type ProcessingFileBrowserEntry,
+  type ProcessingFileBrowserResponse,
   type ProcessingFieldInfo,
   type ProcessingStepInfo,
   type ProcessingTaskResponse,
@@ -61,6 +65,13 @@ const FIELD_LABELS: Record<string, string> = {
 const BASIC_INPUT_KEYS = ["task_id", "task_root", "raw_zip_dir", "dem_file", "master_date", "env_scripts", "matlab_func_dir"];
 const SLC_INPUT_KEYS = ["satellite", "polarization", "swath", "bn_start1", "bn_end1"];
 const METHOD_INPUT_KEYS = ["enable_crop", "diff_method", "shp_method", "phase_opt_method", "point_selection_method", "stamps_mode"];
+const PATH_FIELD_MODES: Record<string, "file" | "directory" | "any"> = {
+  task_root: "directory",
+  raw_zip_dir: "any",
+  dem_file: "file",
+  env_scripts: "file",
+  matlab_func_dir: "directory",
+};
 const HIDDEN_ADVANCED_PARAMETER_KEYS = new Set([
   "skip_unzip",
   "skip_generate_slc",
@@ -133,6 +144,26 @@ function addUnique(target: string[], key: string) {
   if (!target.includes(key)) target.push(key);
 }
 
+function canBrowseField(fieldKey: string) {
+  return fieldKey in PATH_FIELD_MODES;
+}
+
+function firstPathLine(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !isPlaceholder(line));
+}
+
+function appendPathLine(value: string, path: string) {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.includes(path)) lines.push(path);
+  return lines.join("\n");
+}
+
 function selectedSteps(defaults: ProcessingDefaultsResponse, inputs: Record<string, string>) {
   const steps = processingSteps(defaults);
   const start = inputs.workflow_start || steps[0]?.key;
@@ -177,21 +208,33 @@ function FieldControl({
   field,
   value,
   onChange,
+  onBrowse,
   allowDefault = false,
 }: {
   field: ProcessingFieldInfo;
   value: string;
   onChange: (value: string) => void;
+  onBrowse?: (field: ProcessingFieldInfo) => void;
   allowDefault?: boolean;
 }) {
   const label = FIELD_LABELS[field.key] ?? field.key;
   const defaultText = formatValue(field.default_value);
   const placeholder = allowDefault && field.default_value !== undefined ? `默认：${defaultText}` : `填写 ${field.key}`;
 
+  const showBrowse = canBrowseField(field.key) && onBrowse;
+
   if (field.key === "env_scripts") {
     return (
       <label className="processing-field wide">
-        <span>{label}</span>
+        <span className="field-title-row">
+          {label}
+          {showBrowse ? (
+            <button className="browse-path-button" type="button" onClick={() => onBrowse(field)}>
+              <FolderOpen size={14} />
+              浏览
+            </button>
+          ) : null}
+        </span>
         <textarea
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -206,7 +249,15 @@ function FieldControl({
   if (field.options.length > 0) {
     return (
       <label className="processing-field">
-        <span>{label}</span>
+        <span className="field-title-row">
+          {label}
+          {showBrowse ? (
+            <button className="browse-path-button" type="button" onClick={() => onBrowse(field)}>
+              <FolderOpen size={14} />
+              浏览
+            </button>
+          ) : null}
+        </span>
         <select value={value} onChange={(event) => onChange(event.target.value)}>
           {allowDefault && <option value="">使用默认：{defaultText}</option>}
           {field.options.map((option) => (
@@ -222,7 +273,15 @@ function FieldControl({
 
   return (
     <label className="processing-field">
-      <span>{label}</span>
+      <span className="field-title-row">
+        {label}
+        {showBrowse ? (
+          <button className="browse-path-button" type="button" onClick={() => onBrowse(field)}>
+            <FolderOpen size={14} />
+            浏览
+          </button>
+        ) : null}
+      </span>
       <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
       <small>{field.description}</small>
     </label>
@@ -246,6 +305,12 @@ const JOB_STATUS_LABELS: Record<ProcessingJobResponse["status"], string> = {
   cancelled: "已停止",
 };
 
+type BrowserTarget = {
+  fieldKey: string;
+  label: string;
+  mode: "file" | "directory" | "any";
+};
+
 export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJobStarted }: ProcessingTaskModalProps) {
   const [defaults, setDefaults] = useState<ProcessingDefaultsResponse | null>(null);
   const [inputs, setInputs] = useState<Record<string, string>>({});
@@ -256,6 +321,11 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
   const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [browserTarget, setBrowserTarget] = useState<BrowserTarget | null>(null);
+  const [browserData, setBrowserData] = useState<ProcessingFileBrowserResponse | null>(null);
+  const [browserPath, setBrowserPath] = useState("");
+  const [browserError, setBrowserError] = useState("");
+  const [isBrowserLoading, setIsBrowserLoading] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -418,6 +488,51 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     setInputs((current) => ({ ...current, workflow_start: value, workflow_end: nextEnd }));
     setCreatedTask(null);
     setJob(null);
+  }
+
+  async function loadBrowserPath(path?: string) {
+    try {
+      setBrowserError("");
+      setIsBrowserLoading(true);
+      const data = await browseProcessingFiles(path);
+      setBrowserData(data);
+      setBrowserPath(data.current_path);
+    } catch (browseError) {
+      setBrowserError(browseError instanceof Error ? browseError.message : String(browseError));
+    } finally {
+      setIsBrowserLoading(false);
+    }
+  }
+
+  function openPathBrowser(field: ProcessingFieldInfo) {
+    const initialPath = field.key === "env_scripts" ? firstPathLine(inputs[field.key] ?? "") : firstPathLine(inputs[field.key] ?? "");
+    setBrowserTarget({
+      fieldKey: field.key,
+      label: FIELD_LABELS[field.key] ?? field.key,
+      mode: PATH_FIELD_MODES[field.key] ?? "any",
+    });
+    setBrowserData(null);
+    void loadBrowserPath(initialPath);
+  }
+
+  function closePathBrowser() {
+    setBrowserTarget(null);
+    setBrowserData(null);
+    setBrowserPath("");
+    setBrowserError("");
+  }
+
+  function canSelectBrowserEntry(entry: ProcessingFileBrowserEntry) {
+    if (!browserTarget) return false;
+    return browserTarget.mode === "any" || (browserTarget.mode === "directory" ? entry.is_dir : !entry.is_dir);
+  }
+
+  function selectBrowserPath(path: string) {
+    if (!browserTarget) return;
+    const currentValue = inputs[browserTarget.fieldKey] ?? "";
+    const nextValue = browserTarget.fieldKey === "env_scripts" ? appendPathLine(currentValue, path) : path;
+    updateInput(browserTarget.fieldKey, nextValue);
+    closePathBrowser();
   }
 
   function applySavedTask(task: ProcessingTaskResponse) {
@@ -585,7 +700,7 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                 <div className="processing-field-grid">
                   {basicFields.map((field) => (
                     <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
-                      <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} />
+                      <FieldControl field={field} value={inputs[field.key] ?? ""} onBrowse={openPathBrowser} onChange={(value) => updateInput(field.key, value)} />
                     </div>
                   ))}
                 </div>
@@ -600,7 +715,7 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                   <div className="processing-field-grid">
                     {slcFields.map((field) => (
                       <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
-                        <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} />
+                        <FieldControl field={field} value={inputs[field.key] ?? ""} onBrowse={openPathBrowser} onChange={(value) => updateInput(field.key, value)} />
                       </div>
                     ))}
                   </div>
@@ -615,7 +730,7 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                   </div>
                   <div className="processing-field-grid">
                     {methodFields.map((field) => (
-                      <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} key={field.key} />
+                      <FieldControl field={field} value={inputs[field.key] ?? ""} onBrowse={openPathBrowser} onChange={(value) => updateInput(field.key, value)} key={field.key} />
                     ))}
                   </div>
                 </>
@@ -631,7 +746,7 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                   <div className="processing-field-grid compact">
                     {cropFields.map((field) => (
                       <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
-                        <FieldControl field={field} value={inputs[field.key] ?? ""} onChange={(value) => updateInput(field.key, value)} />
+                        <FieldControl field={field} value={inputs[field.key] ?? ""} onBrowse={openPathBrowser} onChange={(value) => updateInput(field.key, value)} />
                       </div>
                     ))}
                   </div>
@@ -651,6 +766,7 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                             field={parameter}
                             key={parameter.key}
                             value={inputs[parameter.key] ?? ""}
+                            onBrowse={openPathBrowser}
                             onChange={(value) => updateInput(parameter.key, value)}
                           />
                         ))}
@@ -760,6 +876,106 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
             </aside>
           </div>
         )}
+        {browserTarget ? (
+          <div className="file-browser-layer">
+            <section className="file-browser-modal" aria-label="选择 Linux 路径">
+              <header className="file-browser-header">
+                <div>
+                  <h3>选择 {browserTarget.label}</h3>
+                  <p>浏览的是后端 Linux worker 可访问的文件系统路径。</p>
+                </div>
+                <button className="icon-button subtle" type="button" onClick={closePathBrowser} title="关闭">
+                  <X size={16} />
+                </button>
+              </header>
+
+              <div className="file-browser-path-row">
+                <input
+                  value={browserPath}
+                  onChange={(event) => setBrowserPath(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void loadBrowserPath(browserPath);
+                  }}
+                  placeholder="/home/yu"
+                />
+                <button className="icon-text-button" type="button" onClick={() => void loadBrowserPath(browserPath)}>
+                  {isBrowserLoading ? <Loader2 size={15} /> : <FolderOpen size={15} />}
+                  打开
+                </button>
+              </div>
+
+              {browserData?.roots.length ? (
+                <div className="file-browser-roots">
+                  {browserData.roots.map((root) => (
+                    <button type="button" key={root.path} onClick={() => void loadBrowserPath(root.path)}>
+                      {root.name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {browserError ? (
+                <div className="processing-error compact-error">
+                  <AlertTriangle size={15} />
+                  {browserError}
+                </div>
+              ) : null}
+
+              <div className="file-browser-list">
+                {browserData?.parent_path ? (
+                  <button className="file-browser-parent" type="button" onClick={() => void loadBrowserPath(browserData.parent_path ?? undefined)}>
+                    <FolderOpen size={15} />
+                    上一级
+                  </button>
+                ) : null}
+                {browserData?.entries.map((entry) => (
+                  <div className={`file-browser-entry ${entry.is_dir ? "is-dir" : ""}`} key={entry.path}>
+                    <button
+                      className="file-browser-entry-main"
+                      type="button"
+                      onClick={() => {
+                        if (entry.is_dir) {
+                          void loadBrowserPath(entry.path);
+                        } else if (canSelectBrowserEntry(entry)) {
+                          selectBrowserPath(entry.path);
+                        }
+                      }}
+                    >
+                      {entry.is_dir ? <FolderOpen size={16} /> : <FileCheck2 size={16} />}
+                      <span>
+                        <strong>{entry.name}</strong>
+                        <small>{entry.path}</small>
+                      </span>
+                    </button>
+                    {canSelectBrowserEntry(entry) ? (
+                      <button className="file-browser-select" type="button" onClick={() => selectBrowserPath(entry.path)}>
+                        选择
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+                {!isBrowserLoading && browserData && browserData.entries.length === 0 ? <p className="file-browser-empty">这个目录里没有可显示的项目。</p> : null}
+                {isBrowserLoading ? (
+                  <p className="file-browser-empty">
+                    <Loader2 size={15} />
+                    正在读取目录
+                  </p>
+                ) : null}
+              </div>
+
+              <footer className="file-browser-footer">
+                {(browserTarget.mode === "directory" || browserTarget.mode === "any") && browserData ? (
+                  <button className="primary-action" type="button" onClick={() => selectBrowserPath(browserData.current_path)}>
+                    使用当前文件夹
+                  </button>
+                ) : null}
+                <button className="icon-text-button" type="button" onClick={closePathBrowser}>
+                  取消
+                </button>
+              </footer>
+            </section>
+          </div>
+        ) : null}
       </section>
     </div>
   );

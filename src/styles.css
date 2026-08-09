@@ -897,6 +897,7 @@ button {
 }
 
 .processing-modal {
+  position: relative;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(1280px, 100%);
@@ -1058,6 +1059,33 @@ button {
   color: #26302b;
   font-size: 13px;
   font-weight: 700;
+}
+
+.field-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.browse-path-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd8d2;
+  border-radius: 7px;
+  padding: 3px 7px;
+  color: var(--accent-dark);
+  background: #f7fbf9;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.browse-path-button:hover {
+  border-color: #9bc7b6;
+  background: var(--accent-soft);
 }
 
 .processing-field input,
@@ -1295,6 +1323,205 @@ button {
   color: #7c2424;
   background: #fff1f1;
   white-space: pre-wrap;
+}
+
+.compact-error {
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.file-browser-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(17, 24, 22, 0.42);
+}
+
+.file-browser-modal {
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+  width: min(760px, 100%);
+  max-height: min(780px, calc(100vh - 70px));
+  overflow: hidden;
+  border: 1px solid #c7d3ce;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px rgba(15, 24, 20, 0.24);
+}
+
+.file-browser-header,
+.file-browser-footer,
+.file-browser-path-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+}
+
+.file-browser-header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--soft-border);
+}
+
+.file-browser-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.file-browser-header p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.file-browser-path-row {
+  padding-bottom: 0;
+}
+
+.file-browser-path-row input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #cbd5d0;
+  border-radius: 8px;
+  padding: 9px 10px;
+  outline: none;
+}
+
+.file-browser-path-row input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(23, 131, 95, 0.12);
+}
+
+.file-browser-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.file-browser-roots button {
+  border: 1px solid #d5dfda;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #264238;
+  background: #f8fbf9;
+  font-size: 12px;
+}
+
+.file-browser-roots button:hover {
+  border-color: #9bc7b6;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+}
+
+.file-browser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 220px;
+  overflow: auto;
+  border-top: 1px solid var(--soft-border);
+  border-bottom: 1px solid var(--soft-border);
+  padding: 10px 12px;
+  background: #f7faf8;
+}
+
+.file-browser-parent,
+.file-browser-entry {
+  border: 1px solid #dbe5e0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.file-browser-parent {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  align-self: flex-start;
+  padding: 7px 10px;
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.file-browser-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px;
+}
+
+.file-browser-entry.is-dir {
+  border-color: #cfe2d9;
+}
+
+.file-browser-entry-main {
+  display: flex;
+  min-width: 0;
+  gap: 9px;
+  align-items: center;
+  border: 0;
+  padding: 0;
+  color: #24302b;
+  background: transparent;
+  text-align: left;
+}
+
+.file-browser-entry-main span {
+  display: grid;
+  min-width: 0;
+}
+
+.file-browser-entry-main strong,
+.file-browser-entry-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-browser-entry-main strong {
+  font-size: 13px;
+}
+
+.file-browser-entry-main small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.file-browser-select {
+  border: 1px solid #bcd8cc;
+  border-radius: 7px;
+  padding: 5px 9px;
+  color: var(--accent-dark);
+  background: #f1faf6;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.file-browser-empty {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: center;
+  margin: 18px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.file-browser-footer {
+  justify-content: flex-end;
+}
+
+.file-browser-footer .primary-action {
+  width: auto;
+  min-width: 140px;
+  margin: 0;
+  padding: 9px 12px;
 }
 
 @media (max-width: 1180px) {

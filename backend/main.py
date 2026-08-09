@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api_clients import DeepSeekChatClient, SiliconFlowEmbeddingClient
 from .config import get_settings
+from .file_browser import browse_processing_files
 from .prompt_builder import (
     build_system_prompt,
     build_user_prompt,
@@ -43,6 +44,7 @@ from .schemas import (
     ProcessingConfigPreviewResponse,
     ProcessingConfigRequest,
     ProcessingDefaultsResponse,
+    ProcessingFileBrowserResponse,
     ProcessingJobCreateRequest,
     ProcessingJobResponse,
     ProcessingTaskCreateRequest,
@@ -136,6 +138,16 @@ def health() -> HealthResponse:
 @app.get("/api/processing/defaults", response_model=ProcessingDefaultsResponse)
 def processing_defaults() -> ProcessingDefaultsResponse:
     return get_processing_defaults(settings())
+
+
+@app.get("/api/processing/files", response_model=ProcessingFileBrowserResponse)
+def processing_files(path: str | None = None) -> ProcessingFileBrowserResponse:
+    try:
+        return browse_processing_files(settings(), path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @app.post("/api/processing/config/preview", response_model=ProcessingConfigPreviewResponse)
