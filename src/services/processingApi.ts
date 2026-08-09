@@ -52,6 +52,47 @@ export interface ProcessingTaskResponse {
   safety_notice: string;
 }
 
+export type ProcessingJobStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancel_requested"
+  | "cancelled";
+
+export interface ProcessingJobStep {
+  key: string;
+  title: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "skipped";
+  started_at?: string | null;
+  finished_at?: string | null;
+  message?: string | null;
+}
+
+export interface ProcessingJobResponse {
+  job_id: string;
+  task_id: string;
+  status: ProcessingJobStatus;
+  workflow: string;
+  progress_current: number;
+  progress_total: number;
+  progress_percent: number;
+  current_step?: string | null;
+  steps: ProcessingJobStep[];
+  config_path: string;
+  job_path: string;
+  log_path: string;
+  pid?: number | null;
+  return_code?: number | null;
+  error?: string | null;
+  log_tail: string;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  execution_enabled: boolean;
+  safety_notice: string;
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const payload = (await response.json().catch(() => ({}))) as { detail?: string };
 
@@ -91,4 +132,29 @@ export async function createProcessingTask(inputs: Record<string, unknown>): Pro
   });
 
   return parseResponse<ProcessingTaskResponse>(response);
+}
+
+export async function createProcessingJob(taskId: string, workflow = "full"): Promise<ProcessingJobResponse> {
+  const response = await fetch(`${assistantRuntimeConfig.processingApiBaseUrl}/jobs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ task_id: taskId, workflow }),
+  });
+
+  return parseResponse<ProcessingJobResponse>(response);
+}
+
+export async function fetchProcessingJob(taskId: string, jobId: string): Promise<ProcessingJobResponse> {
+  const response = await fetch(`${assistantRuntimeConfig.processingApiBaseUrl}/tasks/${taskId}/jobs/${jobId}`);
+  return parseResponse<ProcessingJobResponse>(response);
+}
+
+export async function cancelProcessingJob(taskId: string, jobId: string): Promise<ProcessingJobResponse> {
+  const response = await fetch(`${assistantRuntimeConfig.processingApiBaseUrl}/tasks/${taskId}/jobs/${jobId}/cancel`, {
+    method: "POST",
+  });
+
+  return parseResponse<ProcessingJobResponse>(response);
 }

@@ -8,6 +8,7 @@ export interface AssistantRequest {
   question: string;
   sessionId: string;
   messages: ChatMessage[];
+  signal?: AbortSignal;
 }
 
 export interface AssistantResponse {
@@ -69,6 +70,10 @@ function toAssistantResponse(classifiedTypes: QueryType[], answer: MockAnswer): 
 export const mockAssistantProvider: AssistantProvider = {
   mode: "mock",
   async answer(request) {
+    if (request.signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+
     const classifiedTypes = classifyQuestion(request.question);
     const matchedAnswer = selectMockAnswer(request.question);
 
@@ -217,6 +222,7 @@ export const llmApiAssistantProvider: AssistantProvider = {
     try {
       const response = await fetch(`${llm.baseUrl}${llm.endpointPath}`, {
         method: "POST",
+        signal: request.signal,
         headers: {
           "Content-Type": "application/json",
           ...(llm.apiKey ? { Authorization: `Bearer ${llm.apiKey}` } : {}),
@@ -247,6 +253,10 @@ export const llmApiAssistantProvider: AssistantProvider = {
         mode: "llm_api",
       };
     } catch (error) {
+      if (request.signal?.aborted) {
+        throw error;
+      }
+
       return createLlmErrorResponse(error instanceof Error ? error.message : String(error), classifiedTypes);
     }
   },
@@ -287,6 +297,7 @@ ${missingFields.map((field) => `- \`${field}\``).join("\n")}
     try {
       const response = await fetch(rag.apiUrl, {
         method: "POST",
+        signal: request.signal,
         headers: {
           "Content-Type": "application/json",
         },
@@ -314,6 +325,10 @@ ${missingFields.map((field) => `- \`${field}\``).join("\n")}
         mode: "rag_api",
       };
     } catch (error) {
+      if (request.signal?.aborted) {
+        throw error;
+      }
+
       return createRagErrorResponse(error instanceof Error ? error.message : String(error), classifiedTypes);
     }
   },

@@ -27,9 +27,12 @@ from .query_planner import (
     should_use_llm_planner,
 )
 from .processing import (
+    cancel_processing_job,
     create_processing_task,
+    create_processing_job,
     get_processing_defaults,
     preview_processing_config,
+    read_processing_job,
     read_processing_task,
 )
 from .rag_index import CodeRagIndex, GammaRagIndex, build_citations, build_split_context
@@ -40,6 +43,8 @@ from .schemas import (
     ProcessingConfigPreviewResponse,
     ProcessingConfigRequest,
     ProcessingDefaultsResponse,
+    ProcessingJobCreateRequest,
+    ProcessingJobResponse,
     ProcessingTaskCreateRequest,
     ProcessingTaskResponse,
 )
@@ -130,12 +135,12 @@ def health() -> HealthResponse:
 
 @app.get("/api/processing/defaults", response_model=ProcessingDefaultsResponse)
 def processing_defaults() -> ProcessingDefaultsResponse:
-    return get_processing_defaults()
+    return get_processing_defaults(settings())
 
 
 @app.post("/api/processing/config/preview", response_model=ProcessingConfigPreviewResponse)
 def processing_config_preview(request: ProcessingConfigRequest) -> ProcessingConfigPreviewResponse:
-    return preview_processing_config(request.inputs)
+    return preview_processing_config(settings(), request.inputs)
 
 
 @app.post("/api/processing/tasks", response_model=ProcessingTaskResponse)
@@ -149,6 +154,32 @@ def processing_task_get(task_id: str) -> ProcessingTaskResponse:
     if task is None:
         raise HTTPException(status_code=404, detail="processing task not found")
     return task
+
+
+@app.post("/api/processing/jobs", response_model=ProcessingJobResponse)
+def processing_job_create(request: ProcessingJobCreateRequest) -> ProcessingJobResponse:
+    try:
+        return create_processing_job(settings(), request.task_id, workflow=request.workflow)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/processing/tasks/{task_id}/jobs/{job_id}", response_model=ProcessingJobResponse)
+def processing_job_get(task_id: str, job_id: str) -> ProcessingJobResponse:
+    job = read_processing_job(settings(), task_id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="processing job not found")
+    return job
+
+
+@app.post("/api/processing/tasks/{task_id}/jobs/{job_id}/cancel", response_model=ProcessingJobResponse)
+def processing_job_cancel(task_id: str, job_id: str) -> ProcessingJobResponse:
+    try:
+        return cancel_processing_job(settings(), task_id, job_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/chat", response_model=ChatResponse)

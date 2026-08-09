@@ -10,9 +10,13 @@ import {
   X,
 } from "lucide-react";
 import {
+  cancelProcessingJob,
   createProcessingTask,
+  createProcessingJob,
   fetchProcessingDefaults,
+  fetchProcessingJob,
   previewProcessingConfig,
+  type ProcessingJobResponse,
   type ProcessingConfigPreviewResponse,
   type ProcessingDefaultsResponse,
   type ProcessingFieldInfo,
@@ -21,6 +25,8 @@ import {
 
 interface ProcessingTaskModalProps {
   onClose: () => void;
+  onTaskSaved?: (task: ProcessingTaskResponse) => void;
+  onJobStarted?: (job: ProcessingJobResponse) => void;
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -51,6 +57,16 @@ const FIELD_LABELS: Record<string, string> = {
 const BASIC_INPUT_KEYS = ["task_id", "task_root", "raw_zip_dir", "dem_file", "master_date", "env_scripts", "matlab_func_dir"];
 const SLC_INPUT_KEYS = ["satellite", "polarization", "swath", "bn_start1", "bn_end1"];
 const METHOD_INPUT_KEYS = ["enable_crop", "diff_method", "shp_method", "phase_opt_method", "point_selection_method", "stamps_mode"];
+const HIDDEN_ADVANCED_PARAMETER_KEYS = new Set([
+  "skip_unzip",
+  "skip_generate_slc",
+  "skip_extract_burst",
+  "notify_enabled",
+  "notify_channel",
+  "qq_mail_user_env",
+  "qq_mail_auth_code_env",
+  "qq_mail_to_env",
+]);
 
 function isPlaceholder(value: unknown) {
   return typeof value === "string" && value.trim().startsWith("<") && value.trim().endsWith(">");
@@ -61,6 +77,12 @@ function valueToInput(value: unknown) {
   if (typeof value === "boolean") return value ? "true" : "false";
   if (value == null || isPlaceholder(value)) return "";
   return String(value);
+}
+
+function hasInputValue(value: unknown) {
+  if (typeof value !== "string") return value != null;
+  const stripped = value.trim();
+  return Boolean(stripped) && !isPlaceholder(stripped);
 }
 
 function buildInitialInputs(defaults: ProcessingDefaultsResponse) {
@@ -137,11 +159,25 @@ function FieldControl({
   );
 }
 
-export function ProcessingTaskModal({ onClose }: ProcessingTaskModalProps) {
+function isActiveJob(job: ProcessingJobResponse | null) {
+  return Boolean(job && ["queued", "running", "cancel_requested"].includes(job.status));
+}
+
+const JOB_STATUS_LABELS: Record<ProcessingJobResponse["status"], string> = {
+  queued: "排队中",
+  running: "处理中",
+  succeeded: "已完成",
+  failed: "失败",
+  cancel_requested: "正在停止",
+  cancelled: "已停止",
+};
+
+export function ProcessingTaskModal({ onClose, onTaskSaved, onJobStarted }: ProcessingTaskModalProps) {
   const [defaults, setDefaults] = useState<ProcessingDefaultsResponse | null>(null);
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<ProcessingConfigPreviewResponse | null>(null);
   const [createdTask, setCreatedTask] = useState<ProcessingTaskResponse | null>(null);
+  const [job, setJob] = useState<ProcessingJobResponse | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -175,6 +211,23 @@ export function ProcessingTaskModal({ onClose }: ProcessingTaskModalProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isActiveJob(job)) return undefined;
+
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const latest = await fetchProcessingJob(job!.task_id, job!.job_id);
+          setJob(latest);
+        } catch (pollError) {
+          setError(pollError instanceof Error ? pollError.message : String(pollError));
+        }
+      })();
+    }, 2000);
+
+    return () => window.clearInterval(timer);
+  }, [job]);
+
   const missingKeys = useMemo(() => new Set(preview?.missing.map((field) => field.key) ?? []), [preview]);
   const allPrimaryFields = useMemo(
     () => [...(defaults?.required_inputs ?? []), ...(defaults?.visible_optional_inputs ?? [])],
@@ -183,6 +236,31 @@ export function ProcessingTaskModal({ onClose }: ProcessingTaskModalProps) {
   const basicFields = useMemo(() => fieldsByKeys(allPrimaryFields, BASIC_INPUT_KEYS), [allPrimaryFields]);
   const slcFields = useMemo(() => fieldsByKeys(allPrimaryFields, SLC_INPUT_KEYS), [allPrimaryFields]);
   const methodFields = useMemo(() => fieldsByKeys(allPrimaryFields, METHOD_INPUT_KEYS), [allPrimaryFields]);
+  const isCropEnabled = (inputs.enable_crop ?? "").trim().toLowerCase() !== "false";
+  const requiredProgressKeys = useMemo(() => {
+    if (!defaults) return [];
+
+    const keys = defaults.required_inputs.map((field) => field.key);
+    if (isCropEnabled) {
+      keys.push(...defaults.crop_inputs.map((field) => field.key));
+    }
+
+    return keys;
+  }, [defaults, isCropEnabled]);
+  const completedRequiredCount = useMemo(
+    () => requiredProgressKeys.filter((key) => hasInputValue(inputs[key])).length,
+    [inputs, requiredProgressKeys],
+  );
+  const configProgress = requiredProgressKeys.length
+    ? Math.round((completedRequiredCount / requiredProgressKeys.length) * 100)
+    : 0;
+  const progressLabel = createdTask
+    ? "配置草稿已保存"
+    : preview?.status === "ready"
+      ? "配置可保存"
+      : "配置待补全";
+  const displayProgress = job ? job.progress_percent : configProgress;
+  const displayProgressLabel = job ? `真实处理：${JOB_STATUS_LABELS[job.status]}` : progressLabel;
   const advancedGroups = useMemo(() => {
     if (!defaults) return [];
 
@@ -196,7 +274,9 @@ export function ProcessingTaskModal({ onClose }: ProcessingTaskModalProps) {
     return defaults.default_groups
       .map((group) => ({
         ...group,
-        parameters: group.parameters.filter((parameter) => !primaryKeys.has(parameter.key)),
+        parameters: group.parameters.filter(
+          (parameter) => !primaryKeys.has(parameter.key) && !HIDDEN_ADVANCED_PARAMETER_KEYS.has(parameter.key),
+        ),
       }))
       .filter((group) => group.parameters.length > 0);
   }, [defaults]);
@@ -204,6 +284,7 @@ export function ProcessingTaskModal({ onClose }: ProcessingTaskModalProps) {
   function updateInput(key: string, value: string) {
     setInputs((current) => ({ ...current, [key]: value }));
     setCreatedTask(null);
+    setJob(null);
   }
 
   async function refreshPreview() {
@@ -224,6 +305,8 @@ export function ProcessingTaskModal({ onClose }: ProcessingTaskModalProps) {
       setIsSubmitting(true);
       const task = await createProcessingTask(inputs);
       setCreatedTask(task);
+      setJob(null);
+      onTaskSaved?.(task);
       setPreview({
         status: task.missing.length ? "needs_input" : "ready",
         missing: task.missing,
@@ -235,6 +318,36 @@ export function ProcessingTaskModal({ onClose }: ProcessingTaskModalProps) {
       });
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function startProcessingJob() {
+    if (!createdTask) return;
+
+    try {
+      setError("");
+      setIsSubmitting(true);
+      const nextJob = await createProcessingJob(createdTask.task_id);
+      setJob(nextJob);
+      onJobStarted?.(nextJob);
+    } catch (jobError) {
+      setError(jobError instanceof Error ? jobError.message : String(jobError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function stopProcessingJob() {
+    if (!job) return;
+
+    try {
+      setError("");
+      setIsSubmitting(true);
+      setJob(await cancelProcessingJob(job.task_id, job.job_id));
+    } catch (stopError) {
+      setError(stopError instanceof Error ? stopError.message : String(stopError));
     } finally {
       setIsSubmitting(false);
     }
@@ -354,6 +467,25 @@ export function ProcessingTaskModal({ onClose }: ProcessingTaskModalProps) {
                 </button>
               </div>
 
+              <div className="processing-progress-card">
+                <div className="processing-progress-heading">
+                  <strong>{displayProgressLabel}</strong>
+                  <span>{displayProgress}%</span>
+                </div>
+                <div className="progress-track" aria-label="配置准备进度">
+                  <div className="progress-fill" style={{ width: `${displayProgress}%` }} />
+                </div>
+                {job ? (
+                  <p>
+                    当前步骤：{job.current_step ?? "无"}；已完成 {job.progress_current}/{job.progress_total}。
+                  </p>
+                ) : (
+                  <p>
+                    已填写 {completedRequiredCount}/{requiredProgressKeys.length} 个必要参数；保存并确认后才会提交 Linux worker。
+                  </p>
+                )}
+              </div>
+
               {preview?.missing.length ? (
                 <div className="missing-list">
                   <strong>缺少字段</strong>
@@ -371,6 +503,17 @@ export function ProcessingTaskModal({ onClose }: ProcessingTaskModalProps) {
                   <p>task_id：{createdTask.task_id}</p>
                   <p>config：{createdTask.config_path}</p>
                   <p>metadata：{createdTask.metadata_path}</p>
+                </div>
+              ) : null}
+
+              {job ? (
+                <div className="processing-job-box">
+                  <strong>处理任务</strong>
+                  <p>job_id：{job.job_id}</p>
+                  <p>status：{JOB_STATUS_LABELS[job.status]}</p>
+                  <p>log：{job.log_path}</p>
+                  {job.error ? <p>error：{job.error}</p> : null}
+                  {job.log_tail ? <pre>{job.log_tail}</pre> : null}
                 </div>
               ) : null}
 
@@ -393,6 +536,28 @@ export function ProcessingTaskModal({ onClose }: ProcessingTaskModalProps) {
                 {isSubmitting ? <Loader2 size={16} /> : <Save size={16} />}
                 保存任务草稿
               </button>
+              <button
+                className="primary-action processing-run-action"
+                type="button"
+                onClick={startProcessingJob}
+                disabled={
+                  isSubmitting ||
+                  !createdTask ||
+                  !createdTask.execution_enabled ||
+                  createdTask.missing.length > 0 ||
+                  Boolean(job && job.status !== "failed" && job.status !== "cancelled")
+                }
+                title={!defaults?.execution_enabled ? "后端未开启真实处理执行" : "确认后提交 Linux worker"}
+              >
+                {isSubmitting ? <Loader2 size={16} /> : <ServerCog size={16} />}
+                确认开始处理
+              </button>
+              {isActiveJob(job) ? (
+                <button className="icon-text-button stop-job-button" type="button" onClick={stopProcessingJob}>
+                  <X size={15} />
+                  停止处理
+                </button>
+              ) : null}
             </aside>
           </div>
         )}

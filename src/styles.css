@@ -496,6 +496,16 @@ button {
   font-size: 12px;
 }
 
+.composer-drop-note {
+  margin-bottom: 8px;
+  border: 1px solid #c9ddd5;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #285547;
+  background: #f2faf6;
+  font-size: 12px;
+}
+
 .composer-box {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px;
@@ -521,6 +531,12 @@ button {
   box-shadow: 0 0 0 3px rgba(23, 131, 95, 0.12);
 }
 
+.composer.drag-over textarea {
+  border-color: var(--accent);
+  background: #f2faf6;
+  box-shadow: 0 0 0 3px rgba(23, 131, 95, 0.12);
+}
+
 .composer textarea:disabled {
   color: #7d8682;
   background: #f4f6f5;
@@ -529,6 +545,16 @@ button {
 .send-button {
   width: 44px;
   height: 44px;
+}
+
+.send-button.stop-button {
+  border-color: #d99191;
+  color: #8d2828;
+  background: #fff1f1;
+}
+
+.send-button.stop-button:hover {
+  background: #ffe7e7;
 }
 
 .send-button:disabled,
@@ -950,6 +976,7 @@ button {
 
 .processing-notice,
 .processing-error,
+.processing-job-box,
 .created-task-box,
 .missing-list {
   border-radius: 8px;
@@ -1123,6 +1150,50 @@ button {
   background: #fff7e8;
 }
 
+.processing-progress-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d9e4de;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fbf9;
+}
+
+.processing-progress-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  color: #24302b;
+  font-size: 12px;
+}
+
+.processing-progress-heading span {
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
+.progress-track {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: #e3ebe7;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #17835f, #52a77d);
+  transition: width 180ms ease;
+}
+
+.processing-progress-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .missing-list {
   border: 1px solid #e4c28d;
   color: #5d4216;
@@ -1139,6 +1210,38 @@ button {
   border: 1px solid #b9d8cb;
   color: #123d2f;
   background: #f1faf6;
+}
+
+.processing-job-box {
+  overflow-wrap: anywhere;
+  border: 1px solid #cbd8d2;
+  color: #24302b;
+  background: #f8fbf9;
+}
+
+.processing-job-box pre {
+  max-height: 210px;
+  overflow: auto;
+  border-radius: 6px;
+  margin: 8px 0 0;
+  padding: 9px;
+  color: #eef7f2;
+  background: var(--code);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.processing-run-action {
+  margin-top: 8px;
+}
+
+.stop-job-button {
+  justify-content: center;
+  border-color: #d99191;
+  color: #8d2828;
+  background: #fff1f1;
 }
 
 .yaml-preview-toolbar {

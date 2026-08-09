@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -19,6 +19,7 @@ import {
   Search,
   Send,
   ServerCog,
+  Square,
   Trash2,
   X,
   ZoomIn,
@@ -35,6 +36,12 @@ import {
 } from "./data/mockKnowledge";
 import { activeAssistantProvider, answerStudentQuestion } from "./services/assistantEngine";
 import { assistantRuntimeConfig } from "./config/assistantConfig";
+import {
+  createProcessingJob,
+  fetchProcessingJob,
+  type ProcessingJobResponse,
+  type ProcessingTaskResponse,
+} from "./services/processingApi";
 
 const STORAGE_KEY = "sar-gamma-phase1-sessions-v1";
 
@@ -61,6 +68,94 @@ function readStoredSessions() {
 function shortenTitle(text: string) {
   const compact = text.trim().replace(/\s+/g, " ");
   return compact.length > 18 ? `${compact.slice(0, 18)}...` : compact || "未命名会话";
+}
+
+type DroppedPath = {
+  value: string;
+  isExact: boolean;
+};
+
+function droppedFilePath(file: File): DroppedPath {
+  const nativePath = (file as File & { path?: string }).path;
+  if (nativePath) return { value: nativePath, isExact: true };
+
+  if (file.webkitRelativePath) {
+    return { value: file.webkitRelativePath, isExact: false };
+  }
+
+  return { value: `<请补全绝对路径>/${file.name}`, isExact: false };
+}
+
+function buildDroppedFilesText(files: File[]) {
+  const paths = files.map(droppedFilePath);
+  const text = paths.map((path) => path.value).join("\n");
+  const hasOnlyPlaceholders = paths.every((path) => !path.isExact);
+
+  return {
+    text,
+    notice: hasOnlyPlaceholders
+      ? "浏览器没有暴露文件绝对路径，已插入文件名占位符；执行前请补全 Linux 绝对路径。"
+      : "已把拖入文件的路径插入输入框。",
+  };
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+function isProcessingStartCommand(text: string) {
+  const compact = text.replace(/\s+/g, "").toLowerCase();
+  return (
+    compact === "开始处理" ||
+    compact === "进行数据处理" ||
+    compact.includes("确认开始处理") ||
+    compact.includes("确认进行数据处理") ||
+    compact.includes("确认执行处理")
+  );
+}
+
+function isProcessingStatusCommand(text: string) {
+  const compact = text.replace(/\s+/g, "").toLowerCase();
+  return compact.includes("处理进度") || compact.includes("任务进度") || compact.includes("处理状态") || compact.includes("任务状态");
+}
+
+function extractTaskId(text: string) {
+  const match = text.match(/\b([A-Za-z0-9_.-]{3,})\b/);
+  return match?.[1];
+}
+
+function formatProcessingJob(job: ProcessingJobResponse) {
+  return [
+    "## 处理任务已提交",
+    "",
+    `- task_id：\`${job.task_id}\``,
+    `- job_id：\`${job.job_id}\``,
+    `- 状态：\`${job.status}\``,
+    `- 进度：${job.progress_percent}% (${job.progress_current}/${job.progress_total})`,
+    `- 当前步骤：\`${job.current_step ?? "无"}\``,
+    `- 日志：\`${job.log_path}\``,
+    "",
+    "可以输入 `处理进度` 查询最新状态，也可以在处理任务面板查看日志。",
+  ].join("\n");
+}
+
+function formatProcessingJobStatus(job: ProcessingJobResponse) {
+  return [
+    "## 处理进度",
+    "",
+    `- task_id：\`${job.task_id}\``,
+    `- job_id：\`${job.job_id}\``,
+    `- 状态：\`${job.status}\``,
+    `- 进度：${job.progress_percent}% (${job.progress_current}/${job.progress_total})`,
+    `- 当前步骤：\`${job.current_step ?? "无"}\``,
+    job.error ? `- 错误：${job.error}` : "",
+    "",
+    job.log_tail
+      ? ["### 日志片段", "", "```text", job.log_tail.slice(-2500), "```"].join("\n")
+      : "暂无日志片段。",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function CodeBlock({ className, children }: { className?: string; children: ReactNode }) {
@@ -499,8 +594,13 @@ function App() {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [isResponding, setIsResponding] = useState(false);
   const [waitSeconds, setWaitSeconds] = useState(0);
+  const [isComposerDragOver, setIsComposerDragOver] = useState(false);
+  const [dropNotice, setDropNotice] = useState("");
   const [isCropPreviewOpen, setIsCropPreviewOpen] = useState(false);
   const [isProcessingTaskOpen, setIsProcessingTaskOpen] = useState(false);
+  const [latestProcessingTask, setLatestProcessingTask] = useState<ProcessingTaskResponse | null>(null);
+  const [latestProcessingJob, setLatestProcessingJob] = useState<ProcessingJobResponse | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
@@ -580,19 +680,129 @@ function App() {
     });
   }
 
+  function appendAssistantExchange(sessionId: string, question: string, content: string) {
+    const now = new Date().toISOString();
+    const userMessage: ChatMessage = {
+      id: makeId("user"),
+      role: "user",
+      content: question,
+    };
+    const assistantMessage: ChatMessage = {
+      id: makeId("assistant"),
+      role: "assistant",
+      content,
+      queryTypes: ["workflow"],
+    };
+
+    setInput("");
+    setSessions((current) =>
+      current.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              title: session.messages.length <= 1 ? shortenTitle(question) : session.title,
+              updatedAt: now,
+              messages: [...session.messages, userMessage, assistantMessage],
+            }
+          : session,
+      ),
+    );
+  }
+
+  async function handleProcessingStartFromChat(question: string) {
+    if (!activeSession || isResponding) return;
+
+    const sessionId = activeSession.id;
+    const explicitTaskId = extractTaskId(question);
+    const taskId = explicitTaskId ?? latestProcessingTask?.task_id;
+    setInput("");
+    setIsResponding(true);
+
+    try {
+      if (!taskId) {
+        appendAssistantExchange(
+          sessionId,
+          question,
+          "还没有可执行的处理配置。请先打开 `处理任务`，填写并保存一份完整配置，然后再输入 `确认开始处理`。",
+        );
+        return;
+      }
+
+      if (!explicitTaskId && latestProcessingTask?.missing.length) {
+        appendAssistantExchange(
+          sessionId,
+          question,
+          `最近保存的配置还不完整，不能开始处理。缺少：${latestProcessingTask.missing.map((field) => `\`${field.key}\``).join("、")}`,
+        );
+        return;
+      }
+
+      const job = await createProcessingJob(taskId);
+      setLatestProcessingJob(job);
+      appendAssistantExchange(sessionId, question, formatProcessingJob(job));
+    } catch (error) {
+      appendAssistantExchange(
+        sessionId,
+        question,
+        `## 无法开始处理\n\n\`\`\`text\n${error instanceof Error ? error.message : String(error)}\n\`\`\``,
+      );
+    } finally {
+      setIsResponding(false);
+    }
+  }
+
+  async function handleProcessingStatusFromChat(question: string) {
+    if (!activeSession || isResponding) return;
+
+    const sessionId = activeSession.id;
+    setInput("");
+    setIsResponding(true);
+
+    try {
+      if (!latestProcessingJob) {
+        appendAssistantExchange(sessionId, question, "当前会话还没有提交过处理任务。");
+        return;
+      }
+
+      const job = await fetchProcessingJob(latestProcessingJob.task_id, latestProcessingJob.job_id);
+      setLatestProcessingJob(job);
+      appendAssistantExchange(sessionId, question, formatProcessingJobStatus(job));
+    } catch (error) {
+      appendAssistantExchange(
+        sessionId,
+        question,
+        `## 无法查询处理进度\n\n\`\`\`text\n${error instanceof Error ? error.message : String(error)}\n\`\`\``,
+      );
+    } finally {
+      setIsResponding(false);
+    }
+  }
+
   async function sendQuestion(questionText = input) {
     const question = questionText.trim();
     if (!question || !activeSession || isResponding) return;
 
+    if (isProcessingStartCommand(question)) {
+      await handleProcessingStartFromChat(question);
+      return;
+    }
+
+    if (isProcessingStatusCommand(question)) {
+      await handleProcessingStatusFromChat(question);
+      return;
+    }
+
     const now = new Date().toISOString();
     const sessionId = activeSession.id;
     const requestMessages = activeSession.messages;
+    const controller = new AbortController();
     const userMessage: ChatMessage = {
       id: makeId("user"),
       role: "user",
       content: question,
     };
 
+    abortControllerRef.current = controller;
     setInput("");
     setIsResponding(true);
     setWaitSeconds(0);
@@ -614,7 +824,10 @@ function App() {
         question,
         sessionId,
         messages: requestMessages,
+        signal: controller.signal,
       });
+
+      if (controller.signal.aborted) return;
 
       const assistantMessage: ChatMessage = {
         id: makeId("assistant"),
@@ -636,9 +849,38 @@ function App() {
         ),
       );
       setActiveSourceMessageId(assistantMessage.id);
+    } catch (sendError) {
+      const stopped = controller.signal.aborted || isAbortError(sendError);
+      const assistantMessage: ChatMessage = {
+        id: makeId("assistant"),
+        role: "assistant",
+        content: stopped
+          ? "已停止当前回答生成。"
+          : `## 问答请求失败\n\n\`\`\`text\n${sendError instanceof Error ? sendError.message : String(sendError)}\n\`\`\``,
+      };
+
+      setSessions((current) =>
+        current.map((session) =>
+          session.id === sessionId
+            ? {
+                ...session,
+                updatedAt: new Date().toISOString(),
+                messages: [...session.messages, assistantMessage],
+              }
+            : session,
+        ),
+      );
     } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
       setIsResponding(false);
     }
+  }
+
+  function stopCurrentResponse() {
+    abortControllerRef.current?.abort();
+    setIsResponding(false);
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -646,6 +888,39 @@ function App() {
 
     event.preventDefault();
     void sendQuestion();
+  }
+
+  function appendToComposer(text: string) {
+    setInput((current) => {
+      const trimmed = current.trimEnd();
+      return trimmed ? `${trimmed}\n${text}` : text;
+    });
+  }
+
+  function handleComposerDragOver(event: DragEvent<HTMLFormElement>) {
+    if (![...event.dataTransfer.types].includes("Files")) return;
+
+    event.preventDefault();
+    setIsComposerDragOver(true);
+  }
+
+  function handleComposerDragLeave(event: DragEvent<HTMLFormElement>) {
+    const relatedTarget = event.relatedTarget;
+    if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) return;
+
+    setIsComposerDragOver(false);
+  }
+
+  function handleComposerDrop(event: DragEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsComposerDragOver(false);
+
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length === 0) return;
+
+    const dropped = buildDroppedFilesText(files);
+    appendToComposer(dropped.text);
+    setDropNotice(dropped.notice);
   }
 
   async function copyMessage(message: ChatMessage) {
@@ -787,7 +1062,10 @@ function App() {
         </div>
 
         <form
-          className="composer"
+          className={`composer ${isComposerDragOver ? "drag-over" : ""}`}
+          onDragOver={handleComposerDragOver}
+          onDragLeave={handleComposerDragLeave}
+          onDrop={handleComposerDrop}
           onSubmit={(event) => {
             event.preventDefault();
             void sendQuestion();
@@ -797,6 +1075,7 @@ function App() {
             <AlertTriangle size={15} />
             当前版本不会执行 GAMMA、Shell、SSH、MCP 或任何真实处理任务；RAG 仅检索知识库并调用对话模型生成说明。
           </div>
+          {dropNotice ? <div className="composer-drop-note">{dropNotice}</div> : null}
           <div className="composer-box">
             <textarea
               value={input}
@@ -805,8 +1084,13 @@ function App() {
               placeholder="输入 SAR/InSAR 概念、流程、命令、参数、目录或代码模板问题..."
               rows={3}
             />
-            <button className="send-button" type="submit" title="发送问题" disabled={isResponding}>
-              <Send size={18} />
+            <button
+              className={`send-button ${isResponding ? "stop-button" : ""}`}
+              type={isResponding ? "button" : "submit"}
+              title={isResponding ? "停止回答" : "发送问题"}
+              onClick={isResponding ? stopCurrentResponse : undefined}
+            >
+              {isResponding ? <Square size={16} /> : <Send size={18} />}
             </button>
           </div>
         </form>
@@ -840,7 +1124,13 @@ function App() {
         </div>
       </aside>
       </main>
-      {isProcessingTaskOpen && <ProcessingTaskModal onClose={() => setIsProcessingTaskOpen(false)} />}
+      {isProcessingTaskOpen && (
+        <ProcessingTaskModal
+          onClose={() => setIsProcessingTaskOpen(false)}
+          onTaskSaved={setLatestProcessingTask}
+          onJobStarted={setLatestProcessingJob}
+        />
+      )}
       {isCropPreviewOpen && <CropPreviewModal onClose={() => setIsCropPreviewOpen(false)} />}
     </>
   );

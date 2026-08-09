@@ -81,6 +81,7 @@ class BackendSettings:
     max_context_chars: int
     request_timeout_seconds: int
     processing_tasks_dir: Path
+    processing_execution_enabled: bool
 
 
 def get_settings() -> BackendSettings:
@@ -133,4 +134,5 @@ def get_settings() -> BackendSettings:
         max_context_chars=_env_int("RAG_MAX_CONTEXT_CHARS", 9000),
         request_timeout_seconds=_env_int("RAG_REQUEST_TIMEOUT_SECONDS", 90),
         processing_tasks_dir=_resolve_path(_env("PROCESSING_TASKS_DIR"), "runtime/processing_tasks"),
+        processing_execution_enabled=_env_bool("PROCESSING_EXECUTION_ENABLED", False),
     )

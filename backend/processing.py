@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +21,7 @@ from .schemas import (
     ProcessingDefaultsResponse,
     ProcessingFieldInfo,
     ProcessingMissingField,
+    ProcessingJobResponse,
     ProcessingTaskResponse,
 )
 
@@ -39,11 +43,8 @@ from task_defaults import (  # noqa: E402
 )
 
 
-EXECUTION_ENABLED = False
-SAFETY_NOTICE = (
-    "当前接口只生成和保存处理配置，不执行 GAMMA、不执行 Shell、不连接 SSH。"
-    "真实处理应部署在安装了 GAMMA 的 Linux worker 上。"
-)
+SAFETY_NOTICE = "当前接口会生成和保存处理配置；只有显式确认并开启 PROCESSING_EXECUTION_ENABLED=true 后才会提交 Linux worker。"
+EXECUTION_NOTICE = "真实处理已开启：后端会在本机 Linux worker 上调用 gamma_dinsar 固定流程。"
 
 BOOL_FIELDS = {
     "enable_crop",
@@ -56,6 +57,12 @@ BOOL_FIELDS = {
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _safety_notice(settings: BackendSettings | None = None) -> str:
+    if settings and settings.processing_execution_enabled:
+        return EXECUTION_NOTICE
+    return SAFETY_NOTICE
 
 
 def _is_placeholder(value: Any) -> bool:
@@ -121,7 +128,7 @@ def _missing_fields(inputs: dict[str, Any]) -> list[ProcessingMissingField]:
     ]
 
 
-def get_processing_defaults() -> ProcessingDefaultsResponse:
+def get_processing_defaults(settings: BackendSettings) -> ProcessingDefaultsResponse:
     default_groups = [
         ProcessingDefaultGroup(
             name=group_name,
@@ -142,7 +149,8 @@ def get_processing_defaults() -> ProcessingDefaultsResponse:
     template = minimal_config_template()
 
     return ProcessingDefaultsResponse(
-        safety_notice=SAFETY_NOTICE,
+        execution_enabled=settings.processing_execution_enabled,
+        safety_notice=_safety_notice(settings),
         required_inputs=_field_list(REQUIRED_USER_INPUTS),
         crop_inputs=_field_list(CROP_REQUIRED_INPUTS),
         visible_optional_inputs=_field_list(USER_VISIBLE_OPTIONAL_INPUTS),
@@ -152,7 +160,7 @@ def get_processing_defaults() -> ProcessingDefaultsResponse:
     )
 
 
-def preview_processing_config(inputs: dict[str, Any]) -> ProcessingConfigPreviewResponse:
+def preview_processing_config(settings: BackendSettings, inputs: dict[str, Any]) -> ProcessingConfigPreviewResponse:
     normalized = _normalize_inputs(inputs)
     template = minimal_config_template()
     config = dict(template)
@@ -169,7 +177,8 @@ def preview_processing_config(inputs: dict[str, Any]) -> ProcessingConfigPreview
         config=config,
         effective_parameters=effective_parameters,
         config_yaml=_dump_yaml(config),
-        safety_notice=SAFETY_NOTICE,
+        execution_enabled=settings.processing_execution_enabled,
+        safety_notice=_safety_notice(settings),
     )
 
 
@@ -194,7 +203,7 @@ def _unique_task_dir(base_dir: Path, task_id: str) -> tuple[str, Path]:
 
 
 def create_processing_task(settings: BackendSettings, inputs: dict[str, Any]) -> ProcessingTaskResponse:
-    preview = preview_processing_config(inputs)
+    preview = preview_processing_config(settings, inputs)
     task_id, task_dir = _unique_task_dir(
         settings.processing_tasks_dir,
         _safe_task_id(preview.config.get("task_id")),
@@ -210,8 +219,8 @@ def create_processing_task(settings: BackendSettings, inputs: dict[str, Any]) ->
         "task_id": task_id,
         "status": status,
         "created_at": _utc_now(),
-        "execution_enabled": EXECUTION_ENABLED,
-        "safety_notice": SAFETY_NOTICE,
+        "execution_enabled": settings.processing_execution_enabled,
+        "safety_notice": _safety_notice(settings),
         "missing": [field.model_dump() for field in preview.missing],
         "config_path": str(config_path),
         "metadata_path": str(metadata_path),
@@ -226,7 +235,8 @@ def create_processing_task(settings: BackendSettings, inputs: dict[str, Any]) ->
         metadata_path=str(metadata_path),
         missing=preview.missing,
         config_yaml=preview.config_yaml,
-        safety_notice=SAFETY_NOTICE,
+        execution_enabled=settings.processing_execution_enabled,
+        safety_notice=_safety_notice(settings),
     )
 
 
@@ -250,5 +260,145 @@ def read_processing_task(settings: BackendSettings, task_id: str) -> ProcessingT
         metadata_path=str(metadata_path),
         missing=missing,
         config_yaml=config_path.read_text(encoding="utf-8"),
-        safety_notice=metadata.get("safety_notice", SAFETY_NOTICE),
+        execution_enabled=metadata.get("execution_enabled", settings.processing_execution_enabled),
+        safety_notice=metadata.get("safety_notice", _safety_notice(settings)),
     )
+
+
+def _task_dir_from_id(settings: BackendSettings, task_id: str) -> Path:
+    safe_id = _safe_task_id(task_id)
+    return settings.processing_tasks_dir / safe_id
+
+
+def _job_status_path(task_dir: Path, job_id: str) -> Path:
+    return task_dir / "jobs" / job_id / "job.json"
+
+
+def _tail_text(path: Path, max_chars: int = 5000) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return text[-max_chars:]
+
+
+def _read_job(settings: BackendSettings, job_path: Path) -> ProcessingJobResponse:
+    data = json.loads(job_path.read_text(encoding="utf-8"))
+    log_path = Path(data["log_path"])
+    data["log_tail"] = _tail_text(log_path)
+    data["execution_enabled"] = settings.processing_execution_enabled
+    data["safety_notice"] = _safety_notice(settings)
+    return ProcessingJobResponse(**data)
+
+
+def create_processing_job(settings: BackendSettings, task_id: str, workflow: str = "full") -> ProcessingJobResponse:
+    if not settings.processing_execution_enabled:
+        raise RuntimeError("真实处理未开启：请在后端环境变量中设置 PROCESSING_EXECUTION_ENABLED=true 后重启 FastAPI。")
+
+    task = read_processing_task(settings, task_id)
+    if task is None:
+        raise FileNotFoundError("processing task not found")
+    if task.missing:
+        missing = ", ".join(field.key for field in task.missing)
+        raise ValueError(f"配置仍有缺失字段，不能开始处理：{missing}")
+
+    task_dir = Path(task.task_dir)
+    job_id = f"job-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:6]}"
+    job_dir = task_dir / "jobs" / job_id
+    job_dir.mkdir(parents=True, exist_ok=False)
+    job_path = job_dir / "job.json"
+    log_path = job_dir / "job.log"
+
+    job_data: dict[str, Any] = {
+        "job_id": job_id,
+        "task_id": task.task_id,
+        "status": "queued",
+        "workflow": workflow,
+        "progress_current": 0,
+        "progress_total": 0,
+        "progress_percent": 0,
+        "current_step": None,
+        "steps": [],
+        "config_path": task.config_path,
+        "job_path": str(job_path),
+        "log_path": str(log_path),
+        "pid": None,
+        "return_code": None,
+        "error": None,
+        "log_tail": "",
+        "created_at": _utc_now(),
+        "started_at": None,
+        "finished_at": None,
+        "execution_enabled": settings.processing_execution_enabled,
+        "safety_notice": _safety_notice(settings),
+    }
+    job_path.write_text(json.dumps(job_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    command = [
+        sys.executable,
+        "-m",
+        "backend.processing_worker",
+        "--job-path",
+        str(job_path),
+        "--config-path",
+        task.config_path,
+        "--log-path",
+        str(log_path),
+        "--workflow",
+        workflow,
+    ]
+
+    log_handle = log_path.open("a", encoding="utf-8")
+    popen_kwargs: dict[str, Any] = {
+        "cwd": str(PROJECT_ROOT),
+        "stdout": log_handle,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+    }
+    if os.name != "nt":
+        popen_kwargs["start_new_session"] = True
+
+    process = subprocess.Popen(command, **popen_kwargs)
+    log_handle.close()
+
+    job_data["pid"] = process.pid
+    job_path.write_text(json.dumps(job_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return _read_job(settings, job_path)
+
+
+def read_processing_job(settings: BackendSettings, task_id: str, job_id: str) -> ProcessingJobResponse | None:
+    job_path = _job_status_path(_task_dir_from_id(settings, task_id), job_id)
+    if not job_path.exists():
+        return None
+    return _read_job(settings, job_path)
+
+
+def cancel_processing_job(settings: BackendSettings, task_id: str, job_id: str) -> ProcessingJobResponse:
+    job_path = _job_status_path(_task_dir_from_id(settings, task_id), job_id)
+    if not job_path.exists():
+        raise FileNotFoundError("processing job not found")
+
+    data = json.loads(job_path.read_text(encoding="utf-8"))
+    if data.get("status") not in {"queued", "running", "cancel_requested"}:
+        return _read_job(settings, job_path)
+
+    pid = data.get("pid")
+    data["status"] = "cancel_requested"
+    data["finished_at"] = data.get("finished_at") or _utc_now()
+    data["error"] = "用户请求停止处理任务。"
+    job_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if pid:
+        try:
+            if os.name != "nt":
+                os.killpg(int(pid), signal.SIGTERM)
+            else:
+                os.kill(int(pid), signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except Exception as exc:
+            data["error"] = f"停止任务时出错：{exc}"
+
+    data["status"] = "cancelled"
+    data["finished_at"] = _utc_now()
+    job_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return _read_job(settings, job_path)

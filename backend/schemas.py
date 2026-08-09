@@ -120,3 +120,51 @@ class ProcessingTaskResponse(BaseModel):
     config_yaml: str
     execution_enabled: bool = False
     safety_notice: str
+
+
+ProcessingJobStatus = Literal[
+    "queued",
+    "running",
+    "succeeded",
+    "failed",
+    "cancel_requested",
+    "cancelled",
+]
+
+
+class ProcessingJobCreateRequest(BaseModel):
+    task_id: str
+    workflow: str = "full"
+
+
+class ProcessingJobStep(BaseModel):
+    key: str
+    title: str
+    status: Literal["pending", "running", "succeeded", "failed", "skipped"] = "pending"
+    started_at: str | None = None
+    finished_at: str | None = None
+    message: str | None = None
+
+
+class ProcessingJobResponse(BaseModel):
+    job_id: str
+    task_id: str
+    status: ProcessingJobStatus
+    workflow: str
+    progress_current: int = 0
+    progress_total: int = 0
+    progress_percent: int = 0
+    current_step: str | None = None
+    steps: list[ProcessingJobStep] = Field(default_factory=list)
+    config_path: str
+    job_path: str
+    log_path: str
+    pid: int | None = None
+    return_code: int | None = None
+    error: str | None = None
+    log_tail: str = ""
+    created_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    execution_enabled: bool = False
+    safety_notice: str
