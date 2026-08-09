@@ -1,0 +1,45 @@
+# Compact task config for the execution agent.
+# Advanced numeric defaults are defined in task_defaults.py.
+
+task_id: example_task
+task_root: <TASK_ROOT>
+
+raw_zip_dir: <SENTINEL_1_ZIP_DIR_OR_FILE>
+dem_file: <DEM_FILE>
+master_date: <YYYYMMDD>
+
+# Data selection.
+# Defaults: satellite=S1A, polarization=VV, swath=IW1.
+satellite: S1A
+polarization: VV
+swath: IW1
+
+bn_start1: <BURST_START>
+bn_end1: <BURST_END>
+
+# Key processing choices.
+# diff_method: initial | fourier | unwrapped_ls
+# shp_method: tTest | KSTest | ADTest2 | GLRtest | HTCI
+# phase_opt_method:
+#   evd_ps_single | emi_ps_single | evd_sbas_single | emi_sbas_single
+#   evd_ps_block | emi_ps_block | evd_sbas_block | emi_sbas_block
+# point_selection_method: mt_prep_gamma | dsc_select | dsc_pds
+# stamps_mode: ps | sbas | ds
+enable_crop: true
+# If enable_crop is true, crop_* must come from preview/manual selection.
+# Do not use a blind default crop range.
+# crop_roff: <CROP_RANGE_OFFSET>
+# crop_nr: <CROP_RANGE_LENGTH>
+# crop_loff: <CROP_AZIMUTH_OFFSET>
+# crop_nl: <CROP_AZIMUTH_LENGTH>
+diff_method: initial
+shp_method: HTCI
+phase_opt_method: evd_sbas_single
+point_selection_method: dsc_pds
+stamps_mode: sbas
+
+env_scripts:
+  - <GAMMA_ENV_SCRIPT>
+  - <STAMPS_ENV_SCRIPT>
+
+matlab_func_dir: <MATLAB_FUNCTION_ROOT>

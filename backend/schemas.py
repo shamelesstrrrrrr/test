@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+QueryType = Literal["concept", "workflow", "command", "parameter", "file_layout", "code_template"]
+VerificationStatus = Literal[
+    "manual_verified",
+    "partial_manual_evidence",
+    "code_reference",
+    "web_reference",
+    "insufficient_evidence",
+]
+
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatRequest(BaseModel):
+    question: str
+    session_id: str | None = Field(default=None, alias="sessionId")
+    messages: list[ChatTurn] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class Citation(BaseModel):
+    id: str
+    source: str
+    page: str
+    command_name: str
+    section: str
+    verification_status: VerificationStatus
+    retrieval_score: float
+    excerpt: str
+
+
+class ChatResponse(BaseModel):
+    content: str
+    queryTypes: list[QueryType]
+    citations: list[Citation]
+    mode: Literal["rag_api"] = "rag_api"
+
+
+class HealthResponse(BaseModel):
+    status: Literal["ok", "missing_config"]
+    embedding_model: str
+    chat_model: str
+    index_loaded: bool
+    code_index_loaded: bool = False
+    web_search_enabled: bool = False
+    web_search_provider: str = "disabled"
+    missing: list[str]
+
+
+class ProcessingDefaultParameter(BaseModel):
+    key: str
+    default_value: Any
+    description: str
+    options: list[str] = Field(default_factory=list)
+
+
+class ProcessingDefaultGroup(BaseModel):
+    name: str
+    parameters: list[ProcessingDefaultParameter]
+
+
+class ProcessingFieldInfo(BaseModel):
+    key: str
+    description: str
+    default_value: Any = None
+    options: list[str] = Field(default_factory=list)
+
+
+class ProcessingDefaultsResponse(BaseModel):
+    execution_enabled: bool = False
+    safety_notice: str
+    required_inputs: list[ProcessingFieldInfo]
+    crop_inputs: list[ProcessingFieldInfo]
+    visible_optional_inputs: list[ProcessingFieldInfo]
+    default_groups: list[ProcessingDefaultGroup]
+    minimal_template: dict[str, Any]
+    minimal_template_yaml: str
+
+
+class ProcessingConfigRequest(BaseModel):
+    inputs: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProcessingMissingField(BaseModel):
+    key: str
+    description: str
+
+
+class ProcessingConfigPreviewResponse(BaseModel):
+    status: Literal["ready", "needs_input"]
+    missing: list[ProcessingMissingField]
+    config: dict[str, Any]
+    effective_parameters: dict[str, Any]
+    config_yaml: str
+    execution_enabled: bool = False
+    safety_notice: str
+
+
+class ProcessingTaskCreateRequest(ProcessingConfigRequest):
+    allow_incomplete: bool = False
+
+
+class ProcessingTaskResponse(BaseModel):
+    task_id: str
+    status: Literal["pending_review", "ready_for_linux_worker"]
+    task_dir: str
+    config_path: str
+    metadata_path: str
+    missing: list[ProcessingMissingField]
+    config_yaml: str
+    execution_enabled: bool = False
+    safety_notice: str

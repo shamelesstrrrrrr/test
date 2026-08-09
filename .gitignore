@@ -1,0 +1,31 @@
+node_modules
+dist
+.vite
+*.local
+runtime
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local secrets and machine-specific environment files.
+.env
+.env.*
+!.env.example
+.getenv
+*.getenv
+
+# Large local knowledge/data artifacts should be synced separately if needed.
+knowledge/
+处理代码/
+*.pdf
+*.docx
+
+# Real processing configs may contain machine paths. Commit templates instead.
+agent/src/dinsar_config_abc.yaml
+agent/src/gamma_dinsar/sar_agent/task.yaml
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
