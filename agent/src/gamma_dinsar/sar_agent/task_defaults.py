@@ -527,8 +527,9 @@ def minimal_config_template() -> dict[str, Any]:
         "point_selection_method": DEFAULT_TASK_PARAMETERS["point_selection_method"],
         "stamps_mode": DEFAULT_TASK_PARAMETERS["stamps_mode"],
         "env_scripts": [
-            "<GAMMA_ENV_SCRIPT>",
-            "<STAMPS_ENV_SCRIPT>",
+            "/home/yu/CONFIG_InSAR.bash",
+            "/home/yu/StaMPS_CONFIG.bash",
+            "/home/yu/GAMMA.bash",
         ],
         "matlab_func_dir": "<MATLAB_FUNCTION_ROOT>",
     }
