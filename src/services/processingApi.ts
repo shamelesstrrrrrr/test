@@ -120,68 +120,106 @@ export interface ProcessingJobResponse {
   safety_notice: string;
 }
 
-async function parseResponse<T>(response: Response): Promise<T> {
+function trimTrailingSlash(value: string) {
+  return value.replace(/\/+$/, "");
+}
+
+function uniqueValues(values: string[]) {
+  return values.filter((value, index) => value && values.indexOf(value) === index);
+}
+
+function fallbackProcessingApiBaseUrl() {
+  if (typeof window === "undefined" || !window.location.hostname) {
+    return "";
+  }
+
+  return `${window.location.protocol}//${window.location.hostname}:8000/api/processing`;
+}
+
+function processingApiBaseUrls() {
+  return uniqueValues([
+    trimTrailingSlash(assistantRuntimeConfig.processingApiBaseUrl),
+    trimTrailingSlash(fallbackProcessingApiBaseUrl()),
+  ]);
+}
+
+function formatFetchError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+async function parseResponse<T>(response: Response, url: string): Promise<T> {
   const payload = (await response.json().catch(() => ({}))) as { detail?: string };
 
   if (!response.ok) {
-    throw new Error(payload.detail ?? `HTTP ${response.status}`);
+    throw new Error(`${payload.detail ?? `HTTP ${response.status}`} (${url})`);
   }
 
   return payload as T;
 }
 
+async function fetchProcessingApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const errors: string[] = [];
+
+  for (const baseUrl of processingApiBaseUrls()) {
+    const url = `${baseUrl}${path}`;
+
+    try {
+      const response = await fetch(url, init);
+      return await parseResponse<T>(response, url);
+    } catch (error) {
+      errors.push(`${url} -> ${formatFetchError(error)}`);
+      if (!(error instanceof TypeError)) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(`无法连接处理后端，已尝试：\n${errors.join("\n")}`);
+}
+
 export async function fetchProcessingDefaults(): Promise<ProcessingDefaultsResponse> {
-  const response = await fetch(`${assistantRuntimeConfig.processingApiBaseUrl}/defaults`);
-  return parseResponse<ProcessingDefaultsResponse>(response);
+  return fetchProcessingApi<ProcessingDefaultsResponse>("/defaults");
 }
 
 export async function previewProcessingConfig(
   inputs: Record<string, unknown>,
 ): Promise<ProcessingConfigPreviewResponse> {
-  const response = await fetch(`${assistantRuntimeConfig.processingApiBaseUrl}/config/preview`, {
+  return fetchProcessingApi<ProcessingConfigPreviewResponse>("/config/preview", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ inputs }),
   });
-
-  return parseResponse<ProcessingConfigPreviewResponse>(response);
 }
 
 export async function createProcessingTask(inputs: Record<string, unknown>): Promise<ProcessingTaskResponse> {
-  const response = await fetch(`${assistantRuntimeConfig.processingApiBaseUrl}/tasks`, {
+  return fetchProcessingApi<ProcessingTaskResponse>("/tasks", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ inputs, allow_incomplete: true }),
   });
-
-  return parseResponse<ProcessingTaskResponse>(response);
 }
 
 export async function createProcessingJob(taskId: string, workflow = "configured"): Promise<ProcessingJobResponse> {
-  const response = await fetch(`${assistantRuntimeConfig.processingApiBaseUrl}/jobs`, {
+  return fetchProcessingApi<ProcessingJobResponse>("/jobs", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ task_id: taskId, workflow }),
   });
-
-  return parseResponse<ProcessingJobResponse>(response);
 }
 
 export async function fetchProcessingJob(taskId: string, jobId: string): Promise<ProcessingJobResponse> {
-  const response = await fetch(`${assistantRuntimeConfig.processingApiBaseUrl}/tasks/${taskId}/jobs/${jobId}`);
-  return parseResponse<ProcessingJobResponse>(response);
+  return fetchProcessingApi<ProcessingJobResponse>(`/tasks/${taskId}/jobs/${jobId}`);
 }
 
 export async function cancelProcessingJob(taskId: string, jobId: string): Promise<ProcessingJobResponse> {
-  const response = await fetch(`${assistantRuntimeConfig.processingApiBaseUrl}/tasks/${taskId}/jobs/${jobId}/cancel`, {
+  return fetchProcessingApi<ProcessingJobResponse>(`/tasks/${taskId}/jobs/${jobId}/cancel`, {
     method: "POST",
   });
-
-  return parseResponse<ProcessingJobResponse>(response);
 }
