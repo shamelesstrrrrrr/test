@@ -25,6 +25,7 @@ from .schemas import (
     ProcessingTaskResponse,
 )
 from .processing_workflow import (
+    default_field_keys_for_steps,
     resolve_workflow_steps,
     required_field_keys_for_steps,
     workflow_from_inputs,
@@ -164,6 +165,44 @@ def _missing_fields(inputs: dict[str, Any], required_field_keys: list[str]) -> l
     ]
 
 
+def _add_unique(target: list[str], key: str) -> None:
+    if key not in target:
+        target.append(key)
+
+
+def _workflow_config(
+    *,
+    template: dict[str, Any],
+    normalized: dict[str, Any],
+    workflow_start: str,
+    workflow_end: str,
+    required_field_keys: list[str],
+    default_field_keys: list[str],
+) -> dict[str, Any]:
+    keys: list[str] = []
+    for key in ("task_id", "workflow_start", "workflow_end"):
+        _add_unique(keys, key)
+    for key in [*required_field_keys, *default_field_keys]:
+        _add_unique(keys, key)
+
+    config: dict[str, Any] = {}
+    for key in keys:
+        if key == "workflow_start":
+            config[key] = workflow_start
+        elif key == "workflow_end":
+            config[key] = workflow_end
+        elif key in normalized:
+            config[key] = normalized[key]
+        elif key in template:
+            config[key] = template[key]
+        elif key in DEFAULT_TASK_PARAMETERS:
+            config[key] = DEFAULT_TASK_PARAMETERS[key]
+        elif key in CROP_REQUIRED_INPUTS:
+            config[key] = f"<{key.upper()}>"
+
+    return config
+
+
 def get_processing_defaults(settings: BackendSettings) -> ProcessingDefaultsResponse:
     default_groups = [
         ProcessingDefaultGroup(
@@ -201,17 +240,23 @@ def get_processing_defaults(settings: BackendSettings) -> ProcessingDefaultsResp
 def preview_processing_config(settings: BackendSettings, inputs: dict[str, Any]) -> ProcessingConfigPreviewResponse:
     normalized = _normalize_inputs(inputs)
     template = minimal_config_template()
-    config = dict(template)
-
-    for key, value in normalized.items():
-        config[key] = value
-
-    effective_parameters = resolve_effective_inputs(normalized)
-    workflow = workflow_from_inputs(config)
+    workflow_seed = dict(template)
+    workflow_seed.update(normalized)
+    workflow = workflow_from_inputs(workflow_seed)
     workflow_start, workflow_end = workflow_to_range(workflow)
     selected_steps = resolve_workflow_steps(workflow)
+    effective_parameters = resolve_effective_inputs(normalized)
     required_field_keys = required_field_keys_for_steps(selected_steps, effective_parameters)
+    default_field_keys = default_field_keys_for_steps(selected_steps, effective_parameters)
     missing = _missing_fields(effective_parameters, required_field_keys)
+    config = _workflow_config(
+        template=template,
+        normalized=normalized,
+        workflow_start=workflow_start,
+        workflow_end=workflow_end,
+        required_field_keys=required_field_keys,
+        default_field_keys=default_field_keys,
+    )
 
     return ProcessingConfigPreviewResponse(
         status="needs_input" if missing else "ready",

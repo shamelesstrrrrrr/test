@@ -86,19 +86,19 @@ const HIDDEN_ADVANCED_PARAMETER_KEYS = new Set([
 const FALLBACK_PROCESSING_STEPS: ProcessingStepInfo[] = [
   { key: "unzip_s1", title: "解压 Sentinel-1 ZIP", description: "从原始 ZIP 数据解压。", required_inputs: ["task_root", "raw_zip_dir"] },
   { key: "generate_slc", title: "生成 SLC", description: "生成 SLC 数据。", required_inputs: ["task_root", "env_scripts", "satellite", "polarization", "swath"] },
-  { key: "extract_burst", title: "提取 Burst", description: "提取 burst 范围。", required_inputs: ["task_root", "env_scripts", "polarization", "swath", "bn_start1", "bn_end1"] },
-  { key: "slc_geo", title: "主影像地理编码", description: "生成主影像地理编码结果。", required_inputs: ["task_root", "env_scripts", "dem_file", "master_date"] },
+  { key: "extract_burst", title: "提取 Burst", description: "提取 burst 范围。", required_inputs: ["task_root", "env_scripts", "polarization", "swath", "bn_start1", "bn_end1"], default_inputs: ["bn_start2", "bn_end2", "bn_start3", "bn_end3"] },
+  { key: "slc_geo", title: "主影像地理编码", description: "生成主影像地理编码结果。", required_inputs: ["task_root", "env_scripts", "dem_file", "master_date"], default_inputs: ["range_looks", "azimuth_looks", "lat_ovr", "lon_ovr"] },
   { key: "coregistration", title: "主从影像配准", description: "进行主从影像配准。", required_inputs: ["task_root", "env_scripts", "polarization", "swath"] },
-  { key: "crop_rslc", title: "RSLC 裁剪", description: "裁剪 RSLC。", required_inputs: ["task_root", "env_scripts", "master_date", "polarization", "swath"] },
-  { key: "write_rslc_tab", title: "生成 RSLC_tab", description: "生成 RSLC_tab。", required_inputs: ["task_root"] },
-  { key: "base_calc", title: "生成基线和 itab", description: "生成基线和 itab。", required_inputs: ["task_root", "env_scripts", "master_date"] },
-  { key: "mk_mli_all", title: "生成 RMLI 强度图", description: "生成多视强度图。", required_inputs: ["task_root", "env_scripts"] },
-  { key: "diff_workflow", title: "生成差分干涉图", description: "生成差分干涉图。", required_inputs: ["task_root", "env_scripts", "dem_file", "master_date", "diff_method"] },
-  { key: "select_shp", title: "SHP 同质像元选取", description: "选取同质像元。", required_inputs: ["task_root", "env_scripts", "master_date", "matlab_func_dir", "shp_method"] },
-  { key: "phase_optimization", title: "相位优化", description: "进行相位优化。", required_inputs: ["task_root", "env_scripts", "matlab_func_dir", "phase_opt_method", "shp_method"] },
-  { key: "file_construct", title: "组织 StaMPS 时序文件", description: "组织时序文件。", required_inputs: ["task_root", "env_scripts", "master_date"] },
-  { key: "point_selection", title: "候选点选取", description: "选取候选点。", required_inputs: ["task_root", "env_scripts", "master_date", "point_selection_method"] },
-  { key: "stamps_processing", title: "StaMPS 处理", description: "执行 StaMPS 处理。", required_inputs: ["task_root", "env_scripts", "stamps_mode"] },
+  { key: "crop_rslc", title: "RSLC 裁剪", description: "裁剪 RSLC。", required_inputs: ["task_root", "env_scripts", "master_date", "polarization", "swath"], default_inputs: ["enable_crop", "data_format", "scale_factor"] },
+  { key: "write_rslc_tab", title: "生成 RSLC_tab", description: "生成 RSLC_tab。", required_inputs: ["task_root"], default_inputs: ["rslc_template", "rslc_par_template"] },
+  { key: "base_calc", title: "生成基线和 itab", description: "生成基线和 itab。", required_inputs: ["task_root", "env_scripts", "master_date"], default_inputs: ["itab_type", "base_calc_plot_flag", "bperp_min", "bperp_max", "delta_t_min", "delta_t_max", "delta_n_max"] },
+  { key: "mk_mli_all", title: "生成 RMLI 强度图", description: "生成多视强度图。", required_inputs: ["task_root", "env_scripts"], default_inputs: ["rlks", "azlks"] },
+  { key: "diff_workflow", title: "生成差分干涉图", description: "生成差分干涉图。", required_inputs: ["task_root", "env_scripts", "dem_file", "master_date", "diff_method"], default_inputs: ["rlks", "azlks", "diff_param_1", "diff_s_value", "diff_e_value"] },
+  { key: "select_shp", title: "SHP 同质像元选取", description: "选取同质像元。", required_inputs: ["task_root", "env_scripts", "master_date", "matlab_func_dir", "shp_method"], default_inputs: ["cal_win_range", "cal_win_azimuth", "alpha", "matlab_command"] },
+  { key: "phase_optimization", title: "相位优化", description: "进行相位优化。", required_inputs: ["task_root", "env_scripts", "matlab_func_dir", "phase_opt_method", "shp_method"], default_inputs: ["fit_threshold", "ref_id", "block_size", "phase_opt_output_name", "matlab_command"] },
+  { key: "file_construct", title: "组织 StaMPS 时序文件", description: "组织时序文件。", required_inputs: ["task_root", "env_scripts", "master_date"], default_inputs: ["ts_flag"] },
+  { key: "point_selection", title: "候选点选取", description: "选取候选点。", required_inputs: ["task_root", "env_scripts", "master_date", "point_selection_method"], default_inputs: ["psc_da_thresh", "rg_patches", "az_patches", "rg_overlap", "az_overlap", "fit_threshold", "phase_opt_output_name", "matlab_command", "mt_prep_gamma_addds_command"] },
+  { key: "stamps_processing", title: "StaMPS 处理", description: "执行 StaMPS 处理。", required_inputs: ["task_root", "env_scripts", "stamps_mode"], default_inputs: ["matlab_command"] },
 ];
 
 function processingSteps(defaults: ProcessingDefaultsResponse) {
@@ -191,6 +191,31 @@ function requiredKeysForSelectedSteps(
 
     if (step.key === "crop_rslc" && isCropEnabled) {
       defaults.crop_inputs.forEach((field) => addUnique(keys, field.key));
+    }
+
+    if (step.key === "point_selection") {
+      const method = (inputs.point_selection_method || "dsc_pds").toLowerCase();
+      if (["dsc_select", "dsc", "dsc_pds", "pds", "ds"].includes(method)) {
+        addUnique(keys, "matlab_func_dir");
+      }
+    }
+  }
+
+  return keys;
+}
+
+function defaultKeysForSelectedSteps(defaults: ProcessingDefaultsResponse, inputs: Record<string, string>) {
+  const keys: string[] = [];
+  const steps = selectedSteps(defaults, inputs);
+
+  for (const step of steps) {
+    (step.default_inputs ?? []).forEach((key) => addUnique(keys, key));
+
+    if (step.key === "diff_workflow") {
+      const method = (inputs.diff_method || "initial").toLowerCase();
+      if (method === "unwrapped_ls") {
+        ["adf_alpha", "adf_window", "unw_alpha"].forEach((key) => addUnique(keys, key));
+      }
     }
 
     if (step.key === "point_selection") {
@@ -402,6 +427,11 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
 
     return requiredKeysForSelectedSteps(defaults, inputs, isCropEnabled);
   }, [defaults, inputs, isCropEnabled]);
+  const activeDefaultKeys = useMemo(() => {
+    if (!defaults) return [];
+
+    return defaultKeysForSelectedSteps(defaults, inputs);
+  }, [defaults, inputs]);
   const activeFieldKeys = useMemo(() => {
     const keys = [...requiredProgressKeys];
 
@@ -461,11 +491,14 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
       .map((group) => ({
         ...group,
         parameters: group.parameters.filter(
-          (parameter) => !primaryKeys.has(parameter.key) && !HIDDEN_ADVANCED_PARAMETER_KEYS.has(parameter.key),
+          (parameter) =>
+            activeDefaultKeys.includes(parameter.key) &&
+            !primaryKeys.has(parameter.key) &&
+            !HIDDEN_ADVANCED_PARAMETER_KEYS.has(parameter.key),
         ),
       }))
       .filter((group) => group.parameters.length > 0);
-  }, [defaults]);
+  }, [activeDefaultKeys, defaults]);
 
   function updateInput(key: string, value: string) {
     setInputs((current) => ({ ...current, [key]: value }));

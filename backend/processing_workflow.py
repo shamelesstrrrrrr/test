@@ -11,6 +11,7 @@ class ProcessingStepSpec:
     method_name: str
     description: str
     required_inputs: tuple[str, ...] = ()
+    default_inputs: tuple[str, ...] = ()
 
 
 PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
@@ -34,6 +35,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_extract_burst_real",
         "从 SLC 中提取指定 burst 范围。",
         ("task_root", "env_scripts", "polarization", "swath", "bn_start1", "bn_end1"),
+        ("bn_start2", "bn_end2", "bn_start3", "bn_end3"),
     ),
     ProcessingStepSpec(
         "slc_geo",
@@ -41,6 +43,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_slc_geo_real",
         "为主影像生成地理编码相关结果。",
         ("task_root", "env_scripts", "dem_file", "master_date"),
+        ("range_looks", "azimuth_looks", "lat_ovr", "lon_ovr"),
     ),
     ProcessingStepSpec(
         "coregistration",
@@ -55,6 +58,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_slc_copy_crop_all_real",
         "按人工确认的范围裁剪 RSLC。",
         ("task_root", "env_scripts", "master_date", "polarization", "swath"),
+        ("enable_crop", "data_format", "scale_factor"),
     ),
     ProcessingStepSpec(
         "write_rslc_tab",
@@ -62,6 +66,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "write_rslc_tab_from_list_real",
         "从影像列表生成后续步骤需要的 RSLC_tab。",
         ("task_root",),
+        ("rslc_template", "rslc_par_template"),
     ),
     ProcessingStepSpec(
         "base_calc",
@@ -69,6 +74,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_base_calc_itab_real",
         "生成 SBAS 基线文件和 itab 文件。",
         ("task_root", "env_scripts", "master_date"),
+        ("itab_type", "base_calc_plot_flag", "bperp_min", "bperp_max", "delta_t_min", "delta_t_max", "delta_n_max"),
     ),
     ProcessingStepSpec(
         "mk_mli_all",
@@ -76,6 +82,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_mk_mli_all_real",
         "根据 RSLC_tab 生成多视强度图。",
         ("task_root", "env_scripts"),
+        ("rlks", "azlks"),
     ),
     ProcessingStepSpec(
         "diff_workflow",
@@ -83,6 +90,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_diff_workflow_real",
         "按选择的差分方法生成差分干涉图。",
         ("task_root", "env_scripts", "dem_file", "master_date", "diff_method"),
+        ("rlks", "azlks", "diff_param_1", "diff_s_value", "diff_e_value"),
     ),
     ProcessingStepSpec(
         "select_shp",
@@ -90,6 +98,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_select_shp_matlab_real",
         "调用 MATLAB 方法选择同质像元。",
         ("task_root", "env_scripts", "master_date", "matlab_func_dir", "shp_method"),
+        ("cal_win_range", "cal_win_azimuth", "alpha", "matlab_command"),
     ),
     ProcessingStepSpec(
         "phase_optimization",
@@ -97,6 +106,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_phase_optimization_workflow_real",
         "调用相位优化方法生成优化结果。",
         ("task_root", "env_scripts", "matlab_func_dir", "phase_opt_method", "shp_method"),
+        ("fit_threshold", "ref_id", "block_size", "phase_opt_output_name", "matlab_command"),
     ),
     ProcessingStepSpec(
         "file_construct",
@@ -104,6 +114,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_file_construct_real",
         "把差分、RMLI、基线等结果整理为 StaMPS 时序输入。",
         ("task_root", "env_scripts", "master_date"),
+        ("ts_flag",),
     ),
     ProcessingStepSpec(
         "point_selection",
@@ -111,6 +122,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_point_selection_real",
         "按 mt_prep_gamma、DSC 或 PDS 路线选取候选点。",
         ("task_root", "env_scripts", "master_date", "point_selection_method"),
+        ("psc_da_thresh", "rg_patches", "az_patches", "rg_overlap", "az_overlap", "fit_threshold", "phase_opt_output_name", "matlab_command", "mt_prep_gamma_addds_command"),
     ),
     ProcessingStepSpec(
         "stamps_processing",
@@ -118,6 +130,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_stamps_processing_real",
         "进入 StaMPS 工作目录执行时序处理。",
         ("task_root", "env_scripts", "stamps_mode"),
+        ("matlab_command",),
     ),
 )
 
@@ -263,6 +276,34 @@ def required_field_keys_for_steps(
     return keys
 
 
+def default_field_keys_for_steps(
+    steps: tuple[ProcessingStepSpec, ...],
+    inputs: dict[str, Any],
+) -> list[str]:
+    keys: list[str] = []
+
+    def add(field_key: str) -> None:
+        if field_key not in keys:
+            keys.append(field_key)
+
+    for step in steps:
+        for key in step.default_inputs:
+            add(key)
+
+        if step.key == "diff_workflow":
+            method = str(inputs.get("diff_method") or "initial").strip().lower()
+            if method == "unwrapped_ls":
+                for key in ("adf_alpha", "adf_window", "unw_alpha"):
+                    add(key)
+
+        if step.key == "point_selection":
+            method = str(inputs.get("point_selection_method") or "dsc_pds").strip().lower()
+            if method in {"dsc_select", "dsc", "dsc_pds", "pds", "ds"}:
+                add("matlab_func_dir")
+
+    return keys
+
+
 def missing_fields_for_workflow(inputs: dict[str, Any], workflow: str) -> list[str]:
     steps = resolve_workflow_steps(workflow)
     required_keys = required_field_keys_for_steps(steps, inputs)
@@ -276,6 +317,7 @@ def workflow_step_payloads() -> list[dict[str, Any]]:
             "title": step.title,
             "description": step.description,
             "required_inputs": list(step.required_inputs),
+            "default_inputs": list(step.default_inputs),
         }
         for step in PROCESSING_STEPS
     ]

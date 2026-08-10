@@ -81,6 +81,7 @@ class ProcessingStepInfo(BaseModel):
     title: str
     description: str
     required_inputs: list[str] = Field(default_factory=list)
+    default_inputs: list[str] = Field(default_factory=list)
 
 
 class ProcessingWorkflowPreset(BaseModel):

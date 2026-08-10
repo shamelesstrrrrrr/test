@@ -105,6 +105,16 @@ class LocalCommandExecutor:
         if not unzip_path.exists():
             return f"解压目录不存在：{unzip_path}"
 
+        existing_slc_dirs = self.find_slc_dirs(str(unzip_path))
+        if existing_slc_dirs:
+            existing = "\n".join(str(path) for path in existing_slc_dirs)
+            return (
+                "检测到已生成的 SLC 日期目录，已跳过 S1_SLC_Normal，避免重复运行外部重命名脚本。\n"
+                f"搜索目录：{unzip_path}\n"
+                f"已检测到：\n{existing}\n"
+                "如果需要重新生成 SLC，请使用新的 task_root，或手动确认后清理旧的日期 SLC 目录。"
+            )
+
         command = (
             f"S1_SLC_Normal "
             f"{shlex.quote(str(unzip_path))} "
@@ -273,7 +283,7 @@ class LocalCommandExecutor:
 
             logs.append(
                 self.run_extract_burst_multi(
-                    slc_dir=str(slc_dir),
+                    unzip_dir=str(slc_dir),
                     burst_dir=str(sub_burst_dir),
                     polarization_code=polarization_code,
                     swath_code=swath_code,

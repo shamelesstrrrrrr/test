@@ -24,6 +24,7 @@ export interface ProcessingStepInfo {
   title: string;
   description: string;
   required_inputs: string[];
+  default_inputs?: string[];
 }
 
 export interface ProcessingWorkflowPreset {
