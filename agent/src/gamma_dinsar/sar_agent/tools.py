@@ -176,7 +176,7 @@ class AgentTools:
         if missing:
             return "提取 burst 缺少参数：" + ", ".join(missing)
 
-        return self._executor().run_extract_burst_multi(
+        return self._executor().run_extract_burst_multi_from_unzip_dir(
             unzip_dir=inputs["unzip_dir"],
             burst_dir=inputs["burst_dir"],
             polarization_code=inputs["polarization_code"],
