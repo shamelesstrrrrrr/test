@@ -45,6 +45,10 @@ const FIELD_LABELS: Record<string, string> = {
   master_date: "主影像日期",
   bn_start1: "Burst 起始编号",
   bn_end1: "Burst 结束编号",
+  bn_start2: "第二组 Burst 起始编号",
+  bn_end2: "第二组 Burst 结束编号",
+  bn_start3: "第三组 Burst 起始编号",
+  bn_end3: "第三组 Burst 结束编号",
   env_scripts: "Linux 环境脚本",
   matlab_func_dir: "MATLAB 函数目录",
   satellite: "卫星",
@@ -63,7 +67,17 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 const BASIC_INPUT_KEYS = ["task_id", "task_root", "raw_zip_dir", "dem_file", "master_date", "env_scripts", "matlab_func_dir"];
-const SLC_INPUT_KEYS = ["satellite", "polarization", "swath", "bn_start1", "bn_end1"];
+const SLC_INPUT_KEYS = [
+  "satellite",
+  "polarization",
+  "swath",
+  "bn_start1",
+  "bn_end1",
+  "bn_start2",
+  "bn_end2",
+  "bn_start3",
+  "bn_end3",
+];
 const METHOD_INPUT_KEYS = ["enable_crop", "diff_method", "shp_method", "phase_opt_method", "point_selection_method", "stamps_mode"];
 const PATH_FIELD_MODES: Record<string, "file" | "directory" | "any"> = {
   task_root: "directory",
@@ -144,6 +158,13 @@ function addUnique(target: string[], key: string) {
   if (!target.includes(key)) target.push(key);
 }
 
+function burstGroupCount(inputs: Record<string, string>) {
+  const swath = (inputs.swath || inputs.swath_code || "IW1").toUpperCase().replace(/\s+/g, "");
+  if (["IW1+IW2+IW3", "7"].includes(swath)) return 3;
+  if (["IW1+IW2", "IW1+IW3", "IW2+IW3", "4", "5", "6"].includes(swath)) return 2;
+  return 1;
+}
+
 function canBrowseField(fieldKey: string) {
   return fieldKey in PATH_FIELD_MODES;
 }
@@ -191,6 +212,18 @@ function requiredKeysForSelectedSteps(
 
     if (step.key === "crop_rslc" && isCropEnabled) {
       defaults.crop_inputs.forEach((field) => addUnique(keys, field.key));
+    }
+
+    if (step.key === "extract_burst") {
+      const groupCount = burstGroupCount(inputs);
+      if (groupCount >= 2) {
+        addUnique(keys, "bn_start2");
+        addUnique(keys, "bn_end2");
+      }
+      if (groupCount >= 3) {
+        addUnique(keys, "bn_start3");
+        addUnique(keys, "bn_end3");
+      }
     }
 
     if (step.key === "point_selection") {
@@ -418,6 +451,25 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     () => [...(defaults?.required_inputs ?? []), ...(defaults?.visible_optional_inputs ?? [])],
     [defaults],
   );
+  const allConfigFields = useMemo(() => {
+    const fields = new Map<string, ProcessingFieldInfo>();
+    const addField = (field: ProcessingFieldInfo) => fields.set(field.key, field);
+
+    allPrimaryFields.forEach(addField);
+    (defaults?.crop_inputs ?? []).forEach(addField);
+    (defaults?.default_groups ?? []).forEach((group) => {
+      group.parameters.forEach((parameter) => {
+        fields.set(parameter.key, {
+          key: parameter.key,
+          description: parameter.description,
+          default_value: parameter.default_value,
+          options: parameter.options ?? [],
+        });
+      });
+    });
+
+    return [...fields.values()];
+  }, [allPrimaryFields, defaults]);
   const isCropEnabled = (inputs.enable_crop ?? "").trim().toLowerCase() !== "false";
   const activeSteps = useMemo(() => (defaults ? selectedSteps(defaults, inputs) : []), [defaults, inputs]);
   const activeStepKeys = useMemo(() => new Set(activeSteps.map((step) => step.key)), [activeSteps]);
@@ -443,16 +495,16 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     return keys;
   }, [activeStepKeys, requiredProgressKeys]);
   const basicFields = useMemo(
-    () => fieldsByKeys(allPrimaryFields, BASIC_INPUT_KEYS.filter((key) => activeFieldKeys.includes(key))),
-    [activeFieldKeys, allPrimaryFields],
+    () => fieldsByKeys(allConfigFields, BASIC_INPUT_KEYS.filter((key) => activeFieldKeys.includes(key))),
+    [activeFieldKeys, allConfigFields],
   );
   const slcFields = useMemo(
-    () => fieldsByKeys(allPrimaryFields, SLC_INPUT_KEYS.filter((key) => activeFieldKeys.includes(key))),
-    [activeFieldKeys, allPrimaryFields],
+    () => fieldsByKeys(allConfigFields, SLC_INPUT_KEYS.filter((key) => activeFieldKeys.includes(key))),
+    [activeFieldKeys, allConfigFields],
   );
   const methodFields = useMemo(
-    () => fieldsByKeys(allPrimaryFields, METHOD_INPUT_KEYS.filter((key) => activeFieldKeys.includes(key))),
-    [activeFieldKeys, allPrimaryFields],
+    () => fieldsByKeys(allConfigFields, METHOD_INPUT_KEYS.filter((key) => activeFieldKeys.includes(key))),
+    [activeFieldKeys, allConfigFields],
   );
   const cropFields = useMemo(
     () => (activeStepKeys.has("crop_rslc") && isCropEnabled ? (defaults?.crop_inputs ?? []) : []),

@@ -37,6 +37,18 @@ class LocalCommandExecutor:
 
         return " && ".join(parts)
 
+    def _expected_burst_group_count(self, swath_code: str) -> int | None:
+        group_count_by_swath = {
+            "1": 1,
+            "2": 1,
+            "3": 1,
+            "4": 2,
+            "5": 2,
+            "6": 2,
+            "7": 3,
+        }
+        return group_count_by_swath.get(str(swath_code).strip())
+
     def run_unzip_s1(
         self,
         raw_zip_dir: str,
@@ -199,6 +211,10 @@ class LocalCommandExecutor:
         def has_value(value: str | None) -> bool:
             return value is not None and str(value).strip() not in {"", "-", "None", "none"}
 
+        burst_pairs = [
+            (str(bn_start1), str(bn_end1)),
+        ]
+
         args = [
             "S1_SLC_Copy_Multi",
             str(unzip_path),
@@ -213,11 +229,28 @@ class LocalCommandExecutor:
             if not (has_value(bn_start2) and has_value(bn_end2)):
                 return "第二组 burst 参数不完整：bn_start2 和 bn_end2 必须同时填写，或同时留空。"
             args.extend([str(bn_start2), str(bn_end2)])
+            burst_pairs.append((str(bn_start2), str(bn_end2)))
 
         if has_value(bn_start3) or has_value(bn_end3):
             if not (has_value(bn_start3) and has_value(bn_end3)):
                 return "第三组 burst 参数不完整：bn_start3 和 bn_end3 必须同时填写，或同时留空。"
             args.extend([str(bn_start3), str(bn_end3)])
+            burst_pairs.append((str(bn_start3), str(bn_end3)))
+
+        expected_group_count = self._expected_burst_group_count(str(swath_code))
+        if expected_group_count is not None:
+            if len(burst_pairs) < expected_group_count:
+                return (
+                    "提取 burst 参数不足：当前 swath_code="
+                    f"{swath_code} 需要 {expected_group_count} 组 burst 起止编号，"
+                    f"当前只填写了 {len(burst_pairs)} 组。"
+                )
+            if len(burst_pairs) > expected_group_count:
+                return (
+                    "提取 burst 参数过多：当前 swath_code="
+                    f"{swath_code} 只需要 {expected_group_count} 组 burst 起止编号，"
+                    f"当前填写了 {len(burst_pairs)} 组。"
+                )
 
         command = " ".join(shlex.quote(arg) for arg in args)
         shell_command = self._build_shell_command(command)
@@ -236,6 +269,9 @@ class LocalCommandExecutor:
         if result.returncode != 0 or self._has_error_output(combined_output):
             return (
                 "提取 burst 失败。\n"
+                f"command:\n{command}\n"
+                f"cwd:\n{unzip_path}\n"
+                f"burst_pairs={burst_pairs}\n"
                 f"returncode={result.returncode}\n"
                 f"stdout:\n{result.stdout}\n"
                 f"stderr:\n{result.stderr}"
@@ -243,6 +279,9 @@ class LocalCommandExecutor:
 
         return (
             "提取 burst 命令执行完成。\n"
+            f"command:\n{command}\n"
+            f"cwd:\n{unzip_path}\n"
+            f"burst_pairs={burst_pairs}\n"
             f"stdout:\n{result.stdout[-2000:]}\n"
             f"stderr:\n{result.stderr[-2000:]}"
         )

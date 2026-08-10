@@ -188,6 +188,27 @@ def _is_crop_enabled(value: Any) -> bool:
     return str(value).strip().lower() not in {"0", "false", "no", "off", "否", "不", "none"}
 
 
+def _burst_group_count(inputs: dict[str, Any]) -> int:
+    swath = str(inputs.get("swath") or inputs.get("swath_code") or "IW1").strip().upper().replace(" ", "")
+    group_count_by_swath = {
+        "IW1": 1,
+        "IW2": 1,
+        "IW3": 1,
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "IW1+IW2": 2,
+        "IW1+IW3": 2,
+        "IW2+IW3": 2,
+        "4": 2,
+        "5": 2,
+        "6": 2,
+        "IW1+IW2+IW3": 3,
+        "7": 3,
+    }
+    return group_count_by_swath.get(swath, 1)
+
+
 def default_start_step() -> str:
     return PROCESSING_STEPS[0].key
 
@@ -263,6 +284,15 @@ def required_field_keys_for_steps(
     for step in steps:
         for key in step.required_inputs:
             add(key)
+
+        if step.key == "extract_burst":
+            burst_group_count = _burst_group_count(inputs)
+            if burst_group_count >= 2:
+                add("bn_start2")
+                add("bn_end2")
+            if burst_group_count >= 3:
+                add("bn_start3")
+                add("bn_end3")
 
         if step.key == "crop_rslc" and _is_crop_enabled(inputs.get("enable_crop", True)):
             for key in ("crop_roff", "crop_nr", "crop_loff", "crop_nl"):
