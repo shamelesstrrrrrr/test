@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -14,6 +15,17 @@ SHP_VARIABLE_BY_METHOD = {
 class LocalCommandExecutor:
     def __init__(self, env_scripts: list[str] | None = None) -> None:
         self.env_scripts = env_scripts or []
+
+    def _has_error_output(self, output: str) -> bool:
+        markers = (
+            "ERROR:",
+            "Traceback",
+            "cannot open",
+            "cannot input",
+            "No such file",
+            "没有那个文件或目录",
+        )
+        return any(marker in output for marker in markers)
 
     def _build_shell_command(self, command: str) -> str:
         parts = []
@@ -220,7 +232,8 @@ class LocalCommandExecutor:
             timeout=timeout,
         )
 
-        if result.returncode != 0:
+        combined_output = f"{result.stdout}\n{result.stderr}"
+        if result.returncode != 0 or self._has_error_output(combined_output):
             return (
                 "提取 burst 失败。\n"
                 f"returncode={result.returncode}\n"
@@ -242,11 +255,15 @@ class LocalCommandExecutor:
 
         slc_dirs: list[Path] = []
 
-        for slc_tab in sorted(unzip_path.rglob("SLC_tab")):
-            slc_dir = slc_tab.parent
+        def is_date_slc_dir(path: Path) -> bool:
+            return path.is_dir() and re.fullmatch(r"\d{8}", path.name) is not None and (path / "SLC_tab").is_file()
 
-            if slc_dir not in slc_dirs:
-                slc_dirs.append(slc_dir)
+        if is_date_slc_dir(unzip_path):
+            slc_dirs.append(unzip_path)
+
+        for child in sorted(unzip_path.iterdir()):
+            if is_date_slc_dir(child) and child not in slc_dirs:
+                slc_dirs.append(child)
 
         return slc_dirs
 
