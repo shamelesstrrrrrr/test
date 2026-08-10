@@ -126,7 +126,7 @@ USER_VISIBLE_OPTIONAL_INPUTS: dict[str, str] = {
 FIELD_OPTIONS: dict[str, list[str]] = {
     "satellite": ["S1A", "S1B"],
     "polarization": ["VV", "VH"],
-    "swath": ["IW1", "IW2", "IW3", "IW1+IW2", "IW1+IW3", "IW2+IW3", "IW1+IW2+IW3"],
+    "swath": ["IW1", "IW2", "IW3", "IW1+IW2", "IW2+IW3", "IW1+IW2+IW3"],
     "enable_crop": ["true", "false"],
     "diff_method": ["initial", "fourier", "unwrapped_ls"],
     "shp_method": ["HTCI", "tTest", "KSTest", "ADTest2", "GLRtest"],
@@ -206,12 +206,10 @@ SWATH_OPTIONS = {
     "3": "3",
     "IW1+IW2": "4",
     "4": "4",
-    "IW1+IW3": "5",
+    "IW2+IW3": "5",
     "5": "5",
-    "IW2+IW3": "6",
+    "IW1+IW2+IW3": "6",
     "6": "6",
-    "IW1+IW2+IW3": "7",
-    "7": "7",
 }
 
 SATELLITE_LABELS = {"0": "S1A", "1": "S1B"}
@@ -221,9 +219,8 @@ SWATH_LABELS = {
     "2": "IW2",
     "3": "IW3",
     "4": "IW1+IW2",
-    "5": "IW1+IW3",
-    "6": "IW2+IW3",
-    "7": "IW1+IW2+IW3",
+    "5": "IW2+IW3",
+    "6": "IW1+IW2+IW3",
 }
 
 DEFAULT_DERIVED_CODES = {
