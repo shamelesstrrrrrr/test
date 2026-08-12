@@ -44,7 +44,8 @@ class LocalCommandExecutor:
             "3": 1,
             "4": 2,
             "5": 2,
-            "6": 3,
+            "6": 2,
+            "7": 3,
         }
         return group_count_by_swath.get(str(swath_code).strip())
 
@@ -214,13 +215,8 @@ class LocalCommandExecutor:
             (str(bn_start1), str(bn_end1)),
         ]
 
-        script_path = Path(__file__).resolve().parent / "scripts" / "S1_SLC_Copy_Multi_fixed.sh"
-        if not script_path.is_file():
-            return f"提取 burst 失败：fixed wrapper 不存在：{script_path}"
-
         args = [
-            "bash",
-            str(script_path),
+            "S1_SLC_Copy_Multi",
             str(unzip_path),
             str(burst_path),
             str(polarization_code),

@@ -198,11 +198,13 @@ def _burst_group_count(inputs: dict[str, Any]) -> int:
         "2": 1,
         "3": 1,
         "IW1+IW2": 2,
+        "IW1+IW3": 2,
         "IW2+IW3": 2,
         "4": 2,
         "5": 2,
+        "6": 2,
         "IW1+IW2+IW3": 3,
-        "6": 3,
+        "7": 3,
     }
     return group_count_by_swath.get(swath, 1)
 

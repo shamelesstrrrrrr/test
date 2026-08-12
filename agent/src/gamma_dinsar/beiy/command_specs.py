@@ -26,10 +26,12 @@ SWATH_OPTIONS = {
     "3": "3",
     "IW1+IW2": "4",
     "4": "4",
-    "IW2+IW3": "5",
+    "IW1+IW3": "5",
     "5": "5",
-    "IW1+IW2+IW3": "6",
+    "IW2+IW3": "6",
     "6": "6",
+    "IW1+IW2+IW3": "7",
+    "7": "7",
 }
 
 
@@ -77,7 +79,7 @@ COMMAND_SPECS = {
             CommandInputSpec("slc_dir", "SLC 生成输出目录"),
             CommandInputSpec("satellite_code", "卫星编号：S1A=0，S1B=1"),
             CommandInputSpec("polarization_code", "极化编号：VV=0，VH=1"),
-            CommandInputSpec("swath_code", "子波束编号：IW1=1，IW2=2，IW3=3，组合=4-6"),
+            CommandInputSpec("swath_code", "子波束编号：IW1=1，IW2=2，IW3=3，组合=4-7"),
         ],
         notes="流程第 2 步：unzip_dir -> slc_dir。当前按用户确认的命令行参数方式执行。",
     ),
@@ -102,7 +104,7 @@ COMMAND_SPECS = {
             CommandInputSpec("slc_dir", "S1_SLC_Normal 生成的 SLC 目录"),
             CommandInputSpec("burst_dir", "burst 提取输出目录"),
             CommandInputSpec("polarization_code", "极化编号：VV=0，VH=1"),
-            CommandInputSpec("swath_code", "子波束编号：IW1=1，IW2=2，IW3=3，组合=4-6"),
+            CommandInputSpec("swath_code", "子波束编号：IW1=1，IW2=2，IW3=3，组合=4-7"),
             CommandInputSpec("bn_start1", "第一个 swath 的起始 burst 编号"),
             CommandInputSpec("bn_end1", "第一个 swath 的结束 burst 编号"),
             CommandInputSpec("bn_start2", "第二个 swath 的起始 burst 编号；不用时填 '-'", required=False, default="-"),

@@ -265,10 +265,12 @@ class AgentTools:
             "3": "3",
             "IW1+IW2": "4",
             "4": "4",
-            "IW2+IW3": "5",
+            "IW1+IW3": "5",
             "5": "5",
-            "IW1+IW2+IW3": "6",
+            "IW2+IW3": "6",
             "6": "6",
+            "IW1+IW2+IW3": "7",
+            "7": "7",
         }
 
         polarization_key = str(inputs["polarization"]).strip().upper()
@@ -280,7 +282,7 @@ class AgentTools:
         if swath_key not in swath_map:
             return (
                 f"影像配准失败：swath 参数无效：{inputs['swath']}，"
-                "可选 IW1/IW2/IW3/IW1+IW2/IW2+IW3/IW1+IW2+IW3"
+                "可选 IW1/IW2/IW3/IW1+IW2/IW1+IW3/IW2+IW3/IW1+IW2+IW3"
             )
 
         polarization_code = polarization_map[polarization_key]

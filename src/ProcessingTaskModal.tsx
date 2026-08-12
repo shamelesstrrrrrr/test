@@ -160,8 +160,8 @@ function addUnique(target: string[], key: string) {
 
 function burstGroupCount(inputs: Record<string, string>) {
   const swath = (inputs.swath || inputs.swath_code || "IW1").toUpperCase().replace(/\s+/g, "");
-  if (["IW1+IW2+IW3", "6"].includes(swath)) return 3;
-  if (["IW1+IW2", "IW2+IW3", "4", "5"].includes(swath)) return 2;
+  if (["IW1+IW2+IW3", "7"].includes(swath)) return 3;
+  if (["IW1+IW2", "IW1+IW3", "IW2+IW3", "4", "5", "6"].includes(swath)) return 2;
   return 1;
 }
 
