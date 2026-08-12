@@ -567,6 +567,12 @@ interface DragState {
   startPanY: number;
 }
 
+interface RasterSize {
+  width: number;
+  height: number;
+  name: string;
+}
+
 const DEFAULT_PREVIEW_SIZE = {
   width: 5200,
   height: 3600,
@@ -576,9 +582,25 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function readGammaRasterSize(contents: string, name: string): RasterSize | null {
+  const rangeSamples = contents.match(/^\s*range_samples\s*:\s*(\d+)/m)?.[1];
+  const azimuthLines = contents.match(/^\s*azimuth_lines\s*:\s*(\d+)/m)?.[1];
+
+  if (!rangeSamples || !azimuthLines) {
+    return null;
+  }
+
+  return {
+    width: Number(rangeSamples),
+    height: Number(azimuthLines),
+    name,
+  };
+}
+
 function CropPreviewModal({ onClose }: { onClose: () => void }) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const parameterFileInputRef = useRef<HTMLInputElement | null>(null);
   const [mode, setMode] = useState<CropMode>("crop");
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -586,6 +608,8 @@ function CropPreviewModal({ onClose }: { onClose: () => void }) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
   const [previewSize, setPreviewSize] = useState(DEFAULT_PREVIEW_SIZE);
+  const [sourceSize, setSourceSize] = useState<RasterSize | null>(null);
+  const [parameterError, setParameterError] = useState("");
   const [cropRect, setCropRect] = useState<CropRect>({
     x: 520,
     y: 360,
@@ -601,11 +625,12 @@ function CropPreviewModal({ onClose }: { onClose: () => void }) {
     };
   }, [previewImage]);
 
+  const coordinateSize = sourceSize ?? previewSize;
   const cropValues = {
-    crop_roff: Math.round(cropRect.x),
-    crop_nr: Math.round(cropRect.width),
-    crop_loff: Math.round(cropRect.y),
-    crop_nl: Math.round(cropRect.height),
+    crop_roff: Math.round((cropRect.x / previewSize.width) * coordinateSize.width),
+    crop_nr: Math.round((cropRect.width / previewSize.width) * coordinateSize.width),
+    crop_loff: Math.round((cropRect.y / previewSize.height) * coordinateSize.height),
+    crop_nl: Math.round((cropRect.height / previewSize.height) * coordinateSize.height),
   };
 
   function zoomBy(delta: number) {
@@ -675,6 +700,10 @@ function CropPreviewModal({ onClose }: { onClose: () => void }) {
   }
 
   async function copyCropValues() {
+    if (!sourceSize) {
+      return;
+    }
+
     await navigator.clipboard.writeText(
       [
         `crop_roff: "${cropValues.crop_roff}"`,
@@ -703,8 +732,29 @@ function CropPreviewModal({ onClose }: { onClose: () => void }) {
       }
       return { url: nextUrl, name: file.name };
     });
+    setSourceSize(null);
+    setParameterError("");
+    if (parameterFileInputRef.current) {
+      parameterFileInputRef.current.value = "";
+    }
     setCopied(false);
     resetView();
+  }
+
+  async function handleParameterFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const rasterSize = readGammaRasterSize(await file.text(), file.name);
+    if (!rasterSize) {
+      setSourceSize(null);
+      setParameterError("未在该文件中读取到 range_samples 和 azimuth_lines。");
+      return;
+    }
+
+    setSourceSize(rasterSize);
+    setParameterError("");
+    setCopied(false);
   }
 
   function handlePreviewImageLoad(event: React.SyntheticEvent<HTMLImageElement>) {
@@ -744,9 +794,20 @@ function CropPreviewModal({ onClose }: { onClose: () => void }) {
             type="file"
             onChange={handlePreviewFileChange}
           />
+          <input
+            accept=".par,text/plain"
+            className="hidden-file-input"
+            ref={parameterFileInputRef}
+            type="file"
+            onChange={handleParameterFileChange}
+          />
           <button className="icon-text-button" type="button" onClick={() => fileInputRef.current?.click()}>
             <FileText size={15} />
             选择预览图
+          </button>
+          <button className="icon-text-button" type="button" onClick={() => parameterFileInputRef.current?.click()}>
+            <FileText size={15} />
+            选择 .par
           </button>
           <div className="segmented-control">
             <button
@@ -816,7 +877,7 @@ function CropPreviewModal({ onClose }: { onClose: () => void }) {
               )}
               <span className="preview-chip">
                 {previewImage
-                  ? `${previewImage.name} · ${previewSize.width} x ${previewSize.height}`
+                  ? `${previewImage.name} · 缩略图 ${previewSize.width} x ${previewSize.height}`
                   : "未选择图片"}
               </span>
               <div
@@ -836,6 +897,12 @@ function CropPreviewModal({ onClose }: { onClose: () => void }) {
               <Maximize2 size={16} />
               裁剪参数
             </div>
+            <div className={sourceSize ? "crop-source-status ready" : "crop-source-status missing"}>
+              {sourceSize
+                ? `${sourceSize.name}: ${sourceSize.width} x ${sourceSize.height}`
+                : "未读取原始影像 .par"}
+            </div>
+            {parameterError ? <p className="crop-parameter-error">{parameterError}</p> : null}
             <dl className="crop-param-list">
               {Object.entries(cropValues).map(([key, value]) => (
                 <div key={key}>
@@ -844,9 +911,9 @@ function CropPreviewModal({ onClose }: { onClose: () => void }) {
                 </div>
               ))}
             </dl>
-            <button className="primary-action compact" type="button" onClick={copyCropValues}>
+            <button className="primary-action compact" type="button" onClick={copyCropValues} disabled={!sourceSize}>
               {copied ? <Check size={16} /> : <Copy size={16} />}
-              复制参数
+              {sourceSize ? "复制参数" : "选择 .par 后复制"}
             </button>
           </aside>
         </div>

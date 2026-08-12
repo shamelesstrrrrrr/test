@@ -870,6 +870,30 @@ button {
   margin: 0;
 }
 
+.crop-source-status,
+.crop-parameter-error {
+  margin: 0;
+  border: 1px solid var(--soft-border);
+  border-radius: 7px;
+  padding: 8px 9px;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.crop-source-status.ready {
+  border-color: #b9d8cb;
+  color: #14543f;
+  background: #f1faf6;
+}
+
+.crop-source-status.missing,
+.crop-parameter-error {
+  border-color: #e2c187;
+  color: #6f4b0d;
+  background: #fff8eb;
+}
+
 .crop-param-list div {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 88px;
