@@ -426,8 +426,10 @@ class LocalCommandExecutor:
         # after the configured environment scripts have been sourced.
         python_check = (
             "import sys; import distutils; import matplotlib; "
+            "from scipy.constants import speed_of_light; "
             "print(f'python={sys.executable} version={sys.version.split()[0]}'); "
-            "print(f'matplotlib={matplotlib.__version__}')"
+            "print(f'matplotlib={matplotlib.__version__}'); "
+            "print(f'speed_of_light={speed_of_light}')"
         )
         preflight_command = self._build_shell_command(
             f"python -c {shlex.quote(python_check)}"
@@ -442,29 +444,21 @@ class LocalCommandExecutor:
         if preflight.returncode != 0:
             return (
                 "影像配准环境检查失败：GAMMA 的 ScanSAR_coreg.py 需要当前 Python "
-                "环境能够导入 distutils 和 matplotlib。\n"
+                "环境能够导入 distutils、matplotlib 和 scipy。\n"
                 f"stdout:\n{preflight.stdout}\n"
                 f"stderr:\n{preflight.stderr}\n"
                 "请修复 env_scripts 生效后的 Python 环境后，再重新提交配准任务。"
             )
 
-        dates = [
-            line.strip().split()[0]
-            for line in list_path.read_text(encoding="utf-8").splitlines()
-            if line.strip() and re.fullmatch(r"\d{8}", line.strip().split()[0])
-        ]
-        existing_outputs = [
-            str(coreg_path / date)
-            for date in dates
-            if (coreg_path / date).exists()
-        ]
+        existing_outputs = [str(path) for path in sorted(coreg_path.iterdir())]
         if existing_outputs:
             return (
-                "影像配准未启动：检测到配准输出目录已包含同日期结果，可能是此前的"
-                "完整结果或失败残留。为避免覆盖或混入旧文件，本次任务已停止。\n"
+                "影像配准未启动：检测到 coreg_dir 不是空目录，可能包含此前的完整"
+                "结果或失败残留。为避免覆盖或混入旧文件，本次任务已停止。\n"
                 "已存在：\n"
                 + "\n".join(existing_outputs)
-                + "\n请在确认这些目录仅为失败残留后，手动移走它们，或在配置中使用新的 coreg_dir。"
+                + "\n请在确认这些文件仅为失败残留后，手动移走整个 coreg_dir 的内容，"
+                "或在配置中使用新的空 coreg_dir。"
             )
 
         args = [
