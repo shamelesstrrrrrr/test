@@ -555,6 +555,17 @@ class LocalCommandExecutor:
         if not dates:
             return f"裁剪失败：list_file 为空：{list_path}"
 
+        try:
+            range_offset = int(str(crop_roff).strip())
+            range_count = int(str(crop_nr).strip())
+            azimuth_offset = int(str(crop_loff).strip())
+            azimuth_count = int(str(crop_nl).strip())
+        except (TypeError, ValueError):
+            return "裁剪失败：crop_roff、crop_nr、crop_loff、crop_nl 必须是整数。"
+
+        if range_offset < 0 or azimuth_offset < 0 or range_count <= 0 or azimuth_count <= 0:
+            return "裁剪失败：裁剪起始位置不能为负数，裁剪长度必须大于 0。"
+
         swath_text = str(swath).upper()
         pol_text = str(polarization).lower()
 
@@ -564,7 +575,6 @@ class LocalCommandExecutor:
             date = str(date).strip()
             date_dir = coreg_path / date
             out_dir = crop_path / date
-            out_dir.mkdir(parents=True, exist_ok=True)
 
             if date == str(master_date):
                 input_rslc = date_dir / f"{date}.rslc"
@@ -589,6 +599,36 @@ class LocalCommandExecutor:
             if not input_par.exists():
                 logs.append(f"失败：输入 rslc.par 不存在：{input_par}")
                 continue
+
+            width_text = self._read_par_value(str(input_par), "range_samples")
+            line_text = self._read_par_value(str(input_par), "azimuth_lines")
+            try:
+                source_width = int(width_text or "")
+                source_lines = int(line_text or "")
+            except ValueError:
+                logs.append(
+                    f"失败：无法从参数文件读取影像尺寸：{input_par}\n"
+                    f"range_samples={width_text!r}, azimuth_lines={line_text!r}"
+                )
+                continue
+
+            if range_offset + range_count > source_width or azimuth_offset + azimuth_count > source_lines:
+                logs.append(
+                    f"失败：{date} 的裁剪范围超出实际 RSLC 尺寸。\n"
+                    f"输入尺寸：range_samples={source_width}, azimuth_lines={source_lines}\n"
+                    f"请求范围：range={range_offset}:{range_offset + range_count}, "
+                    f"azimuth={azimuth_offset}:{azimuth_offset + azimuth_count}"
+                )
+                continue
+
+            if out_dir.exists() and any(out_dir.iterdir()):
+                logs.append(
+                    f"失败：裁剪输出目录已存在且非空，未覆盖旧结果：{out_dir}\n"
+                    "请确认目录内容后手动移走它，或使用新的 crop_dir。"
+                )
+                continue
+
+            out_dir.mkdir(parents=True, exist_ok=True)
 
             command = (
                 f"SLC_copy "
@@ -616,7 +656,8 @@ class LocalCommandExecutor:
                 timeout=timeout,
             )
 
-            if result.returncode != 0:
+            combined_output = f"{result.stdout}\n{result.stderr}"
+            if result.returncode != 0 or self._has_error_output(combined_output):
                 logs.append(
                     f"失败：{date}\n"
                     f"returncode={result.returncode}\n"
