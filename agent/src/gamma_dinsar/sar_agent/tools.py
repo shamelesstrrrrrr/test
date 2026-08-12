@@ -439,7 +439,7 @@ class AgentTools:
         )
         logs.append(geo_result)
 
-        if geo_result.startswith("SLC 地理编码失败。"):
+        if geo_result.startswith(("SLC 地理编码失败。", "SLC 地理编码未启动：")):
             return "\n\n".join(logs)
 
         logs.append(f"### 2. 生成差分干涉图，方法：{method}")
