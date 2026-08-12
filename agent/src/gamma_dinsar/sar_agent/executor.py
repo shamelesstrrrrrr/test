@@ -425,8 +425,9 @@ class LocalCommandExecutor:
         # S1_coreg_TOPS invokes ScanSAR_coreg.py through the Python resolved
         # after the configured environment scripts have been sourced.
         python_check = (
-            "import sys; import distutils; "
-            "print(f'python={sys.executable} version={sys.version.split()[0]}')"
+            "import sys; import distutils; import matplotlib; "
+            "print(f'python={sys.executable} version={sys.version.split()[0]}'); "
+            "print(f'matplotlib={matplotlib.__version__}')"
         )
         preflight_command = self._build_shell_command(
             f"python -c {shlex.quote(python_check)}"
@@ -441,7 +442,7 @@ class LocalCommandExecutor:
         if preflight.returncode != 0:
             return (
                 "影像配准环境检查失败：GAMMA 的 ScanSAR_coreg.py 需要当前 Python "
-                "环境能够导入 distutils。\n"
+                "环境能够导入 distutils 和 matplotlib。\n"
                 f"stdout:\n{preflight.stdout}\n"
                 f"stderr:\n{preflight.stderr}\n"
                 "请修复 env_scripts 生效后的 Python 环境后，再重新提交配准任务。"
