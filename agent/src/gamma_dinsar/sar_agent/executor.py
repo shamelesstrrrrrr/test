@@ -348,6 +348,15 @@ class LocalCommandExecutor:
         if not dem_path.is_file():
             return f"DEM 文件不存在：{dem_path}"
 
+        output_path = geo_path / slc_path.stem
+        if output_path.exists():
+            return (
+                "SLC 地理编码未启动：目标输出目录已存在，可能包含此前的完整结果或"
+                "失败残留。为避免混用旧文件，本次任务已停止。\n"
+                f"已存在：{output_path}\n"
+                "请确认目录内容后，手动移走该目录，或在配置中使用新的 geo_dir。"
+            )
+
         geo_path.mkdir(parents=True, exist_ok=True)
 
         args = [
