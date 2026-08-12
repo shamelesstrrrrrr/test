@@ -196,6 +196,8 @@ class ProcessingJobResponse(BaseModel):
     finished_at: str | None = None
     execution_enabled: bool = False
     safety_notice: str
+    auto_archive_path: str | None = None
+    auto_archived_items: list[str] = Field(default_factory=list)
 
 
 class ProcessingFileBrowserRoot(BaseModel):
@@ -216,16 +218,3 @@ class ProcessingFileBrowserResponse(BaseModel):
     parent_path: str | None = None
     roots: list[ProcessingFileBrowserRoot]
     entries: list[ProcessingFileBrowserEntry]
-
-
-class ProcessingCropResetRequest(BaseModel):
-    task_root: str
-
-
-class ProcessingCropResetResponse(BaseModel):
-    status: Literal["archived", "nothing_to_archive"]
-    task_root: str
-    archive_path: str | None = None
-    moved_items: list[str] = Field(default_factory=list)
-    preserved_items: list[str] = Field(default_factory=list)
-    message: str

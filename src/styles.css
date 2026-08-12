@@ -1288,21 +1288,6 @@ button {
   background: #f8fbf9;
 }
 
-.crop-reset-result {
-  overflow-wrap: anywhere;
-  border: 1px solid #e2c187;
-  border-radius: 8px;
-  padding: 10px;
-  color: #624313;
-  background: #fff8eb;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.crop-reset-result p {
-  margin: 5px 0 0;
-}
-
 .processing-job-box pre {
   max-height: 210px;
   overflow: auto;
@@ -1326,13 +1311,6 @@ button {
   border-color: #d99191;
   color: #8d2828;
   background: #fff1f1;
-}
-
-.archive-crop-button {
-  justify-content: center;
-  border-color: #d7b372;
-  color: #76531b;
-  background: #fff8eb;
 }
 
 .yaml-preview-toolbar {

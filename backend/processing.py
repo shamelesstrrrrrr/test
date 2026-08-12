@@ -16,7 +16,6 @@ import yaml
 
 from .config import BackendSettings, PROJECT_ROOT
 from .schemas import (
-    ProcessingCropResetResponse,
     ProcessingConfigPreviewResponse,
     ProcessingDefaultGroup,
     ProcessingDefaultParameter,
@@ -83,7 +82,30 @@ CROP_DEPENDENT_ARTIFACTS = (
     "PHASE_OPT",
     "matlab_scripts",
 )
-CROP_RESET_PRESERVED = ("SLC", "SLC_select", "GEO", "RSLC", "logs")
+
+# For a selected start step, these are the outputs that can be safely replaced.
+# They are moved into task_root/archive before the worker starts, which prevents
+# failed remnants from being mixed with a new run while retaining recoverability.
+AUTO_RESET_ARTIFACTS_BY_START = {
+    "unzip_s1": ("SLC", "SLC_select", "GEO", "RSLC", *CROP_DEPENDENT_ARTIFACTS),
+    "extract_burst": ("SLC_select", "GEO", "RSLC", *CROP_DEPENDENT_ARTIFACTS),
+    "slc_geo": ("GEO", "RSLC", *CROP_DEPENDENT_ARTIFACTS),
+    "coregistration": ("RSLC", *CROP_DEPENDENT_ARTIFACTS),
+    "crop_rslc": CROP_DEPENDENT_ARTIFACTS,
+    "write_rslc_tab": CROP_DEPENDENT_ARTIFACTS[1:],
+    "base_calc": CROP_DEPENDENT_ARTIFACTS[2:],
+    "mk_mli_all": CROP_DEPENDENT_ARTIFACTS[6:],
+    "diff_workflow": CROP_DEPENDENT_ARTIFACTS[7:],
+    "select_shp": ("SHP", "PHASE_OPT", "matlab_scripts"),
+    "phase_optimization": ("PHASE_OPT", "matlab_scripts"),
+}
+
+# Later stages consume products inside PHASE_OPT, so only reset the child
+# directories that those stages themselves create.
+AUTO_RESET_CHILD_ARTIFACTS_BY_START = {
+    "file_construct": ("PHASE_OPT/TS", "PHASE_OPT/_file_construct_inputs"),
+    "point_selection": ("PHASE_OPT/TS/PDS-TS", "PHASE_OPT/TS/PS-TS"),
+}
 
 
 def _utc_now() -> str:
@@ -454,56 +476,62 @@ def _job_log_path_for_task(task: ProcessingTaskResponse, job_id: str) -> Path:
     return Path(task.task_dir) / "jobs" / job_id / "job.log"
 
 
-def archive_crop_dependent_outputs(settings: BackendSettings, task_root_value: str) -> ProcessingCropResetResponse:
-    """Move, rather than delete, products invalidated by a crop-range change."""
-    if not settings.processing_execution_enabled:
-        raise RuntimeError("真实处理未开启，不能归档处理结果。请先设置 PROCESSING_EXECUTION_ENABLED=true。")
+def _archive_existing_outputs_for_workflow(inputs: dict[str, Any], workflow: str) -> tuple[str | None, list[str]]:
+    """Archive outputs invalidated by the selected workflow start step."""
+    workflow_start, _ = workflow_to_range(workflow)
+    task_root_value = str(inputs.get("task_root") or "").strip()
+    if not task_root_value or _is_placeholder(task_root_value):
+        return None, []
 
-    raw_task_root = str(task_root_value or "").strip()
-    if not raw_task_root or _is_placeholder(raw_task_root):
-        raise ValueError("请先填写 Linux 任务根目录 task_root。")
-
-    task_root = Path(raw_task_root).expanduser()
-    try:
-        task_root = task_root.resolve(strict=True)
-    except FileNotFoundError as exc:
-        raise FileNotFoundError(f"任务根目录不存在：{raw_task_root}") from exc
-
+    task_root = Path(task_root_value).expanduser()
     if not task_root.is_dir():
-        raise ValueError(f"任务根目录不是目录：{task_root}")
+        raise FileNotFoundError(f"任务根目录不存在：{task_root_value}")
 
-    sources = [task_root / name for name in CROP_DEPENDENT_ARTIFACTS if (task_root / name).exists() or (task_root / name).is_symlink()]
+    sources: list[tuple[Path, Path]] = []
+    for artifact in AUTO_RESET_ARTIFACTS_BY_START.get(workflow_start, ()):
+        source = task_root / artifact
+        if source.exists() or source.is_symlink():
+            sources.append((source, Path(artifact)))
+
+    for artifact in AUTO_RESET_CHILD_ARTIFACTS_BY_START.get(workflow_start, ()):
+        source = task_root / artifact
+        if source.exists() or source.is_symlink():
+            sources.append((source, Path(artifact)))
+
+    # S1_SLC_Normal writes YYYYMMDD result directories inside SLC, while the
+    # unpacked .SAFE source remains there. Re-running this step retains .SAFE.
+    if workflow_start == "generate_slc":
+        slc_dir = task_root / "SLC"
+        if slc_dir.is_dir():
+            for child in sorted(slc_dir.iterdir()):
+                if re.fullmatch(r"\d{8}", child.name) and (child / "SLC_tab").is_file():
+                    sources.append((child, Path("SLC_generated") / child.name))
+        for artifact in AUTO_RESET_ARTIFACTS_BY_START["extract_burst"]:
+            source = task_root / artifact
+            if source.exists() or source.is_symlink():
+                sources.append((source, Path(artifact)))
+
     if not sources:
-        return ProcessingCropResetResponse(
-            status="nothing_to_archive",
-            task_root=str(task_root),
-            preserved_items=list(CROP_RESET_PRESERVED),
-            message="未发现需要归档的裁剪后结果；可以直接从 RSLC 裁剪开始运行。",
-        )
+        return None, []
 
-    archive_dir = task_root / "archive" / f"crop-reset-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:6]}"
+    archive_dir = task_root / "archive" / f"rerun-{workflow_start}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:6]}"
     archive_dir.mkdir(parents=True, exist_ok=False)
     moved_items: list[str] = []
+    seen_sources: set[Path] = set()
 
-    try:
-        for source in sources:
-            shutil.move(str(source), str(archive_dir / source.name))
-            moved_items.append(source.name)
-    except Exception:
-        # Any outputs already moved remain recoverable in the archive directory.
-        raise
+    for source, relative_destination in sources:
+        if source in seen_sources:
+            continue
+        seen_sources.add(source)
+        destination = archive_dir / relative_destination
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.move(str(source), str(destination))
+        except Exception as exc:
+            raise RuntimeError(f"无法归档旧输出 {source}：{exc}") from exc
+        moved_items.append(str(relative_destination))
 
-    return ProcessingCropResetResponse(
-        status="archived",
-        task_root=str(task_root),
-        archive_path=str(archive_dir),
-        moved_items=moved_items,
-        preserved_items=list(CROP_RESET_PRESERVED),
-        message=(
-            f"已归档 {len(moved_items)} 个裁剪后结果。现在可从“RSLC 裁剪”开始重新运行；"
-            "SLC、SLC_select、GEO、RSLC 和 logs 均未改动。"
-        ),
-    )
+    return str(archive_dir), moved_items
 
 
 def create_processing_job(settings: BackendSettings, task_id: str, workflow: str = "configured") -> ProcessingJobResponse:
@@ -519,6 +547,9 @@ def create_processing_job(settings: BackendSettings, task_id: str, workflow: str
     if missing_fields:
         missing = ", ".join(field.key for field in missing_fields)
         raise ValueError(f"配置仍有缺失字段，不能开始处理：{missing}")
+
+    effective = _effective_inputs_for_task(task)
+    auto_archive_path, auto_archived_items = _archive_existing_outputs_for_workflow(effective, resolved_workflow)
 
     task_dir = Path(task.task_dir)
     job_id = f"job-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:6]}"
@@ -550,8 +581,19 @@ def create_processing_job(settings: BackendSettings, task_id: str, workflow: str
         "finished_at": None,
         "execution_enabled": settings.processing_execution_enabled,
         "safety_notice": _safety_notice(settings),
+        "auto_archive_path": auto_archive_path,
+        "auto_archived_items": auto_archived_items,
     }
     job_path.write_text(json.dumps(job_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if auto_archive_path:
+        log_path.write_text(
+            "自动归档旧结果后重算。\n"
+            f"处理起点：{workflow_to_range(resolved_workflow)[0]}\n"
+            f"归档目录：{auto_archive_path}\n"
+            f"已归档：{', '.join(auto_archived_items)}\n\n",
+            encoding="utf-8",
+        )
 
     command = [
         sys.executable,
