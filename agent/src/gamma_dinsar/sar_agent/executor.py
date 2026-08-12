@@ -425,7 +425,7 @@ class LocalCommandExecutor:
         # S1_coreg_TOPS invokes ScanSAR_coreg.py through the Python resolved
         # after the configured environment scripts have been sourced.
         python_check = (
-            "import sys; import distutils; import matplotlib; "
+            "import sys; import distutils; import matplotlib; import numpy; "
             "from scipy.constants import speed_of_light; "
             "print(f'python={sys.executable} version={sys.version.split()[0]}'); "
             "print(f'matplotlib={matplotlib.__version__}'); "
@@ -444,10 +444,11 @@ class LocalCommandExecutor:
         if preflight.returncode != 0:
             return (
                 "影像配准环境检查失败：GAMMA 的 ScanSAR_coreg.py 需要当前 Python "
-                "环境能够导入 distutils、matplotlib 和 scipy。\n"
+                "环境能够导入 distutils、numpy、matplotlib 和 scipy。\n"
                 f"stdout:\n{preflight.stdout}\n"
                 f"stderr:\n{preflight.stderr}\n"
-                "请修复 env_scripts 生效后的 Python 环境后，再重新提交配准任务。"
+                "请在 source 与任务相同的 env_scripts 后，运行一次环境初始化脚本：\n"
+                f"bash {BUNDLED_SCRIPTS_DIR / 'setup_gamma_python_env.sh'}"
             )
 
         existing_outputs = [str(path) for path in sorted(coreg_path.iterdir())]

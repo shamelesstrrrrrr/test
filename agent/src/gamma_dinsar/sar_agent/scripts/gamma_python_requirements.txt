@@ -1,0 +1,7 @@
+# Python packages imported by the GAMMA ScanSAR/TOPS coregistration scripts
+# used by this project. Run setup_gamma_python_env.sh after source-ing the
+# same GAMMA environment scripts configured in the task.
+setuptools
+numpy
+scipy
+matplotlib
