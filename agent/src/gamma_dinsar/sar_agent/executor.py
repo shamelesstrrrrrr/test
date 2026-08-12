@@ -4,6 +4,9 @@ import re
 import shlex
 import subprocess
 from pathlib import Path
+
+
+BUNDLED_SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
 SHP_VARIABLE_BY_METHOD = {
     "tTest": "TSHP",
     "KSTest": "KSSHP",
@@ -176,11 +179,12 @@ class LocalCommandExecutor:
             bn_end3: str = "",
             timeout: int = 3600,
     ) -> str:
-        unzip_path = Path(unzip_dir).expanduser()
+        slc_path = Path(unzip_dir).expanduser()
         burst_path = Path(burst_dir).expanduser()
+        wrapper_path = BUNDLED_SCRIPTS_DIR / "S1_SLC_Copy_Multi_safe.sh"
 
-        print(">>> RUN S1_SLC_Copy_Multi", flush=True)
-        print(f">>> unzip_dir={unzip_path}", flush=True)
+        print(">>> RUN S1_SLC_Copy_Multi_safe", flush=True)
+        print(f">>> slc_dir={slc_path}", flush=True)
         print(f">>> burst_dir={burst_path}", flush=True)
         print(f">>> polarization_code={polarization_code}", flush=True)
         print(f">>> swath_code={swath_code}", flush=True)
@@ -191,8 +195,11 @@ class LocalCommandExecutor:
         print(f">>> bn_start3={bn_start3}", flush=True)
         print(f">>> bn_end3={bn_end3}", flush=True)
 
-        if not unzip_path.exists():
-            return f"解压目录不存在：{unzip_path}"
+        if not slc_path.exists():
+            return f"SLC 目录不存在：{slc_path}"
+
+        if not wrapper_path.is_file():
+            return f"Burst 兼容脚本不存在：{wrapper_path}"
 
         burst_path.mkdir(parents=True, exist_ok=True)
 
@@ -200,8 +207,9 @@ class LocalCommandExecutor:
             return value is not None and str(value).strip() not in {"", "-", "None", "none"}
 
         args = [
-            "S1_SLC_Copy_Multi",
-            str(unzip_path),
+            "bash",
+            str(wrapper_path),
+            str(slc_path),
             str(burst_path),
             str(polarization_code),
             str(swath_code),
@@ -226,7 +234,7 @@ class LocalCommandExecutor:
 
         result = subprocess.run(
             ["bash", "-lc", shell_command],
-            cwd=str(unzip_path),
+            cwd=str(slc_path),
             text=True,
             capture_output=True,
             timeout=timeout,
@@ -292,29 +300,23 @@ class LocalCommandExecutor:
                 f"swath_code={swath_code}, polarization_code={polarization_code}"
             )
 
-        logs = []
-
-        for slc_dir in slc_dirs:
-            date_name = slc_dir.name
-            sub_burst_dir = Path(burst_dir).expanduser() / date_name
-
-            logs.append(
-                self.run_extract_burst_multi(
-                    unzip_dir=str(slc_dir),
-                    burst_dir=str(sub_burst_dir),
-                    polarization_code=polarization_code,
-                    swath_code=swath_code,
-                    bn_start1=bn_start1,
-                    bn_end1=bn_end1,
-                    bn_start2=bn_start2,
-                    bn_end2=bn_end2,
-                    bn_start3=bn_start3,
-                    bn_end3=bn_end3,
-                    timeout=timeout,
-                )
-            )
-
-        return "\n\n".join(logs)
+        # The legacy script expects the parent SLC directory, not one date
+        # directory at a time. The bundled wrapper filters direct YYYYMMDD
+        # children before invoking GAMMA, preventing support/annotation files
+        # from being mistaken for acquisition dates.
+        return self.run_extract_burst_multi(
+            unzip_dir=unzip_dir,
+            burst_dir=burst_dir,
+            polarization_code=polarization_code,
+            swath_code=swath_code,
+            bn_start1=bn_start1,
+            bn_end1=bn_end1,
+            bn_start2=bn_start2,
+            bn_end2=bn_end2,
+            bn_start3=bn_start3,
+            bn_end3=bn_end3,
+            timeout=timeout,
+        )
     ########################地理编码############
     def run_slc_geo(
             self,

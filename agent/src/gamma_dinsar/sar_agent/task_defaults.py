@@ -150,13 +150,15 @@ FIELD_OPTIONS: dict[str, list[str]] = {
 
 
 DERIVED_PATH_TEMPLATES: dict[str, str] = {
-    "unzip_dir": "{task_root}/unzip",
+    # Keep the historical key for backwards-compatible YAML files. Its actual
+    # location follows the documented SLC workspace convention.
+    "unzip_dir": "{task_root}/SLC",
     "burst_dir": "{task_root}/SLC_select",
     "list_file": "{task_root}/SLC_select/list",
     "geo_dir": "{task_root}/GEO",
-    "coreg_dir": "{task_root}/COREG",
-    "crop_dir": "{task_root}/CROP",
-    "rslc_dir": "{task_root}/CROP",
+    "coreg_dir": "{task_root}/RSLC",
+    "crop_dir": "{task_root}/SLC_copy",
+    "rslc_dir": "{task_root}/SLC_copy",
     "rslc_tab": "{task_root}/RSLC_tab",
     "bperp_file": "{task_root}/bperp_fileSBAS",
     "itab_file": "{task_root}/itabSBAS",

@@ -19,7 +19,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "unzip_s1",
         "解压 Sentinel-1 ZIP",
         "run_unzip_s1_real",
-        "从原始 ZIP 数据解压到任务目录的 unzip 子目录。",
+        "从原始 ZIP 数据解压到任务目录的 SLC 子目录，并在其中生成按日期组织的 SLC。",
         ("task_root", "raw_zip_dir"),
     ),
     ProcessingStepSpec(

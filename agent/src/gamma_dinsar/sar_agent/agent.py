@@ -228,7 +228,7 @@ def build_tools(agent_tools: AgentTools):
 
     @tool
     def write_rslc_tab_from_list_real() -> str:
-        """根据 list_file 和裁剪后的 RSLC 目录结构生成 RSLC_tab。适用于 CROP/$1/$1.rslc 这种旧结构。"""
+        """根据 list_file 和裁剪后的 RSLC 目录结构生成 RSLC_tab。默认对应 SLC_copy/$1/$1.rslc。"""
         return agent_tools.write_rslc_tab_from_list_real()
 
     @tool
