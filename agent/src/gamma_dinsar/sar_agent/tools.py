@@ -428,17 +428,19 @@ class AgentTools:
         logs: list[str] = []
 
         logs.append("### 1. 对裁剪后的干涉主影像重新地理编码")
-        logs.append(
-            self._executor().run_slc_geo(
-                geo_dir=inputs["diff_geo_dir"],
-                slc_file=inputs["diff_master_rslc"],
-                dem_file=inputs["dem_file"],
-                range_looks=str(inputs.get("rlks", "5")),
-                azimuth_looks=str(inputs.get("azlks", "1")),
-                lat_ovr=str(inputs.get("lat_ovr", "5")),
-                lon_ovr=str(inputs.get("lon_ovr", "5")),
-            )
+        geo_result = self._executor().run_slc_geo(
+            geo_dir=inputs["diff_geo_dir"],
+            slc_file=inputs["diff_master_rslc"],
+            dem_file=inputs["dem_file"],
+            range_looks=str(inputs.get("rlks", "5")),
+            azimuth_looks=str(inputs.get("azlks", "1")),
+            lat_ovr=str(inputs.get("lat_ovr", "5")),
+            lon_ovr=str(inputs.get("lon_ovr", "5")),
         )
+        logs.append(geo_result)
+
+        if geo_result.startswith("SLC 地理编码失败。"):
+            return "\n\n".join(logs)
 
         logs.append(f"### 2. 生成差分干涉图，方法：{method}")
 

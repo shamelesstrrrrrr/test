@@ -374,7 +374,8 @@ class LocalCommandExecutor:
             timeout=timeout,
         )
 
-        if result.returncode != 0:
+        combined_output = f"{result.stdout}\n{result.stderr}"
+        if result.returncode != 0 or self._has_error_output(combined_output):
             return (
                 "SLC 地理编码失败。\n"
                 f"returncode={result.returncode}\n"
