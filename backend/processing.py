@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import yaml
 
 from .config import BackendSettings, PROJECT_ROOT
 from .schemas import (
+    ProcessingCropResetResponse,
     ProcessingConfigPreviewResponse,
     ProcessingDefaultGroup,
     ProcessingDefaultParameter,
@@ -61,6 +63,27 @@ BOOL_FIELDS = {
     "skip_extract_burst",
     "notify_enabled",
 }
+
+
+# These are the products whose contents depend on the selected crop window.
+# Keep upstream SLC/Burst/GEO/RSLC results intact so a crop adjustment only
+# requires re-running the workflow from `crop_rslc`.
+CROP_DEPENDENT_ARTIFACTS = (
+    "SLC_copy",
+    "RSLC_tab",
+    "bperp_fileSBAS",
+    "itabSBAS",
+    "bperp_filePS",
+    "itabPS",
+    "RMLI",
+    "GEO_seg",
+    "DIFF",
+    "DIFF2",
+    "SHP",
+    "PHASE_OPT",
+    "matlab_scripts",
+)
+CROP_RESET_PRESERVED = ("SLC", "SLC_select", "GEO", "RSLC", "logs")
 
 
 def _utc_now() -> str:
@@ -429,6 +452,58 @@ def _job_log_path_for_task(task: ProcessingTaskResponse, job_id: str) -> Path:
     if task_root:
         return Path(str(task_root)).expanduser() / "logs" / "processing_jobs" / job_id / "job.log"
     return Path(task.task_dir) / "jobs" / job_id / "job.log"
+
+
+def archive_crop_dependent_outputs(settings: BackendSettings, task_root_value: str) -> ProcessingCropResetResponse:
+    """Move, rather than delete, products invalidated by a crop-range change."""
+    if not settings.processing_execution_enabled:
+        raise RuntimeError("真实处理未开启，不能归档处理结果。请先设置 PROCESSING_EXECUTION_ENABLED=true。")
+
+    raw_task_root = str(task_root_value or "").strip()
+    if not raw_task_root or _is_placeholder(raw_task_root):
+        raise ValueError("请先填写 Linux 任务根目录 task_root。")
+
+    task_root = Path(raw_task_root).expanduser()
+    try:
+        task_root = task_root.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"任务根目录不存在：{raw_task_root}") from exc
+
+    if not task_root.is_dir():
+        raise ValueError(f"任务根目录不是目录：{task_root}")
+
+    sources = [task_root / name for name in CROP_DEPENDENT_ARTIFACTS if (task_root / name).exists() or (task_root / name).is_symlink()]
+    if not sources:
+        return ProcessingCropResetResponse(
+            status="nothing_to_archive",
+            task_root=str(task_root),
+            preserved_items=list(CROP_RESET_PRESERVED),
+            message="未发现需要归档的裁剪后结果；可以直接从 RSLC 裁剪开始运行。",
+        )
+
+    archive_dir = task_root / "archive" / f"crop-reset-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:6]}"
+    archive_dir.mkdir(parents=True, exist_ok=False)
+    moved_items: list[str] = []
+
+    try:
+        for source in sources:
+            shutil.move(str(source), str(archive_dir / source.name))
+            moved_items.append(source.name)
+    except Exception:
+        # Any outputs already moved remain recoverable in the archive directory.
+        raise
+
+    return ProcessingCropResetResponse(
+        status="archived",
+        task_root=str(task_root),
+        archive_path=str(archive_dir),
+        moved_items=moved_items,
+        preserved_items=list(CROP_RESET_PRESERVED),
+        message=(
+            f"已归档 {len(moved_items)} 个裁剪后结果。现在可从“RSLC 裁剪”开始重新运行；"
+            "SLC、SLC_select、GEO、RSLC 和 logs 均未改动。"
+        ),
+    )
 
 
 def create_processing_job(settings: BackendSettings, task_id: str, workflow: str = "configured") -> ProcessingJobResponse:

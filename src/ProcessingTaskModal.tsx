@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Archive,
   AlertTriangle,
   Check,
   Copy,
@@ -11,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  archiveCropDependentOutputs,
   browseProcessingFiles,
   cancelProcessingJob,
   createProcessingTask,
@@ -20,6 +22,7 @@ import {
   previewProcessingConfig,
   type ProcessingJobResponse,
   type ProcessingConfigPreviewResponse,
+  type ProcessingCropResetResponse,
   type ProcessingDefaultsResponse,
   type ProcessingFileBrowserEntry,
   type ProcessingFileBrowserResponse,
@@ -346,6 +349,8 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
   const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResettingCropOutputs, setIsResettingCropOutputs] = useState(false);
+  const [cropReset, setCropReset] = useState<ProcessingCropResetResponse | null>(null);
   const [browserTarget, setBrowserTarget] = useState<BrowserTarget | null>(null);
   const [browserData, setBrowserData] = useState<ProcessingFileBrowserResponse | null>(null);
   const [browserPath, setBrowserPath] = useState("");
@@ -504,6 +509,7 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     setInputs((current) => ({ ...current, [key]: value }));
     setCreatedTask(null);
     setJob(null);
+    setCropReset(null);
   }
 
   function updateWorkflowStart(value: string) {
@@ -655,6 +661,33 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
       setError(stopError instanceof Error ? stopError.message : String(stopError));
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function archiveCropOutputs() {
+    const taskRoot = (inputs.task_root ?? "").trim();
+    if (!taskRoot || isPlaceholder(taskRoot)) {
+      setError("请先填写 Linux 任务根目录，再归档裁剪后的结果。");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "将把 SLC_copy、RSLC_tab、RMLI、GEO_seg、DIFF 等裁剪后结果移动到 task_root/archive/ 中。\n\n"
+        + "不会删除文件，也不会改动 SLC、SLC_select、GEO、RSLC 或 logs。\n\n"
+        + "归档后请从“RSLC 裁剪”开始重新运行。是否继续？",
+    );
+    if (!confirmed) return;
+
+    try {
+      setError("");
+      setIsResettingCropOutputs(true);
+      setCropReset(await archiveCropDependentOutputs(taskRoot));
+      setCreatedTask(null);
+      setJob(null);
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : String(resetError));
+    } finally {
+      setIsResettingCropOutputs(false);
     }
   }
 
@@ -871,6 +904,15 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                 </div>
               ) : null}
 
+              {cropReset ? (
+                <div className="crop-reset-result">
+                  <strong>{cropReset.status === "archived" ? "裁剪后结果已归档" : "无需归档"}</strong>
+                  <p>{cropReset.message}</p>
+                  {cropReset.archive_path ? <p>archive: {cropReset.archive_path}</p> : null}
+                  {cropReset.moved_items.length ? <p>已移动: {cropReset.moved_items.join("、")}</p> : null}
+                </div>
+              ) : null}
+
               <div className="yaml-preview-toolbar">
                 <span>task.yaml</span>
                 <button className="icon-button subtle" type="button" onClick={copyYaml} title="复制 YAML">
@@ -889,6 +931,16 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
               <button className="primary-action" type="button" onClick={saveDraftTask} disabled={isSubmitting}>
                 {isSubmitting ? <Loader2 size={16} /> : <Save size={16} />}
                 保存任务草稿
+              </button>
+              <button
+                className="icon-text-button archive-crop-button"
+                type="button"
+                onClick={archiveCropOutputs}
+                disabled={isSubmitting || isResettingCropOutputs || isActiveJob(job)}
+                title="归档当前裁剪范围产生的下游结果，保留原始和配准结果"
+              >
+                {isResettingCropOutputs ? <Loader2 size={15} /> : <Archive size={15} />}
+                归档裁剪后结果
               </button>
               <button
                 className="primary-action processing-run-action"

@@ -28,6 +28,7 @@ from .query_planner import (
     should_use_llm_planner,
 )
 from .processing import (
+    archive_crop_dependent_outputs,
     cancel_processing_job,
     create_processing_task,
     create_processing_job,
@@ -43,6 +44,8 @@ from .schemas import (
     HealthResponse,
     ProcessingConfigPreviewResponse,
     ProcessingConfigRequest,
+    ProcessingCropResetRequest,
+    ProcessingCropResetResponse,
     ProcessingDefaultsResponse,
     ProcessingFileBrowserResponse,
     ProcessingJobCreateRequest,
@@ -153,6 +156,16 @@ def processing_files(path: str | None = None) -> ProcessingFileBrowserResponse:
 @app.post("/api/processing/config/preview", response_model=ProcessingConfigPreviewResponse)
 def processing_config_preview(request: ProcessingConfigRequest) -> ProcessingConfigPreviewResponse:
     return preview_processing_config(settings(), request.inputs)
+
+
+@app.post("/api/processing/artifacts/archive-from-crop", response_model=ProcessingCropResetResponse)
+def processing_archive_from_crop(request: ProcessingCropResetRequest) -> ProcessingCropResetResponse:
+    try:
+        return archive_crop_dependent_outputs(settings(), request.task_root)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/processing/tasks", response_model=ProcessingTaskResponse)

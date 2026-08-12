@@ -141,6 +141,15 @@ export interface ProcessingFileBrowserResponse {
   entries: ProcessingFileBrowserEntry[];
 }
 
+export interface ProcessingCropResetResponse {
+  status: "archived" | "nothing_to_archive";
+  task_root: string;
+  archive_path?: string | null;
+  moved_items: string[];
+  preserved_items: string[];
+  message: string;
+}
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }
@@ -219,6 +228,16 @@ export async function previewProcessingConfig(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ inputs }),
+  });
+}
+
+export async function archiveCropDependentOutputs(taskRoot: string): Promise<ProcessingCropResetResponse> {
+  return fetchProcessingApi<ProcessingCropResetResponse>("/artifacts/archive-from-crop", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ task_root: taskRoot }),
   });
 }
 
