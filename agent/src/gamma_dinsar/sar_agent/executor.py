@@ -422,6 +422,50 @@ class LocalCommandExecutor:
 
         coreg_path.mkdir(parents=True, exist_ok=True)
 
+        # S1_coreg_TOPS invokes ScanSAR_coreg.py through the Python resolved
+        # after the configured environment scripts have been sourced.
+        python_check = (
+            "import sys; import distutils; "
+            "print(f'python={sys.executable} version={sys.version.split()[0]}')"
+        )
+        preflight_command = self._build_shell_command(
+            f"python -c {shlex.quote(python_check)}"
+        )
+        preflight = subprocess.run(
+            ["bash", "-lc", preflight_command],
+            cwd=str(coreg_path),
+            text=True,
+            capture_output=True,
+            timeout=min(timeout, 60),
+        )
+        if preflight.returncode != 0:
+            return (
+                "影像配准环境检查失败：GAMMA 的 ScanSAR_coreg.py 需要当前 Python "
+                "环境能够导入 distutils。\n"
+                f"stdout:\n{preflight.stdout}\n"
+                f"stderr:\n{preflight.stderr}\n"
+                "请修复 env_scripts 生效后的 Python 环境后，再重新提交配准任务。"
+            )
+
+        dates = [
+            line.strip().split()[0]
+            for line in list_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and re.fullmatch(r"\d{8}", line.strip().split()[0])
+        ]
+        existing_outputs = [
+            str(coreg_path / date)
+            for date in dates
+            if (coreg_path / date).exists()
+        ]
+        if existing_outputs:
+            return (
+                "影像配准未启动：检测到配准输出目录已包含同日期结果，可能是此前的"
+                "完整结果或失败残留。为避免覆盖或混入旧文件，本次任务已停止。\n"
+                "已存在：\n"
+                + "\n".join(existing_outputs)
+                + "\n请在确认这些目录仅为失败残留后，手动移走它们，或在配置中使用新的 coreg_dir。"
+            )
+
         args = [
             "S1_SLC_COREG_Multi",
             str(burst_dir),
@@ -445,7 +489,8 @@ class LocalCommandExecutor:
             timeout=timeout,
         )
 
-        if result.returncode != 0:
+        combined_output = f"{result.stdout}\n{result.stderr}"
+        if result.returncode != 0 or self._has_error_output(combined_output):
             return (
                 "影像配准失败。\n"
                 f"returncode={result.returncode}\n"
