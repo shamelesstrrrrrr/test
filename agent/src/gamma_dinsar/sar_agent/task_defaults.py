@@ -83,7 +83,7 @@ DEFAULT_PARAMETER_GROUPS: dict[str, dict[str, tuple[Any, str]]] = {
         "skip_unzip": (False, "是否跳过 ZIP 解压。"),
         "skip_generate_slc": (False, "是否跳过 SLC 生成。"),
         "skip_extract_burst": (False, "是否跳过 burst 提取。"),
-        "notify_enabled": (True, "是否发送处理通知。"),
+        "notify_enabled": (False, "是否发送处理结束通知。默认不发送。"),
         "notify_channel": ("qq_mail", "通知渠道。"),
         "qq_mail_user_env": ("QQ_MAIL_USER", "邮箱账号环境变量名。"),
         "qq_mail_auth_code_env": ("QQ_MAIL_AUTH_CODE", "邮箱授权码环境变量名。"),

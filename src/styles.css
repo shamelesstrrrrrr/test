@@ -1370,6 +1370,75 @@ button {
   margin: 3px 0 0;
 }
 
+.notification-settings {
+  margin-top: 20px;
+}
+
+.notification-toggle {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid #d5e1db;
+  border-radius: 8px;
+  padding: 11px;
+  color: #26302b;
+  background: #fbfdfc;
+  cursor: pointer;
+}
+
+.notification-toggle:has(input:checked) {
+  border-color: #9bc7b6;
+  background: #f1faf6;
+}
+
+.notification-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+
+.notification-toggle span {
+  display: grid;
+  gap: 3px;
+}
+
+.notification-toggle strong {
+  font-size: 13px;
+}
+
+.notification-toggle small,
+.notification-config-note p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.notification-config-note {
+  margin-top: 8px;
+  border-left: 3px solid #7ab39a;
+  padding: 9px 11px;
+  color: #274235;
+  background: #f4faf7;
+  font-size: 12px;
+}
+
+.notification-config-note pre {
+  overflow: auto;
+  margin: 8px 0;
+  border-radius: 6px;
+  padding: 9px;
+  color: #d9f1e4;
+  background: #19342a;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.notification-config-note p {
+  margin: 0;
+}
+
 .missing-list {
   border: 1px solid #e4c28d;
   color: #5d4216;
@@ -1469,6 +1538,30 @@ button {
 .job-archive-note span,
 .job-archive-note small {
   overflow-wrap: anywhere;
+}
+
+.job-notification-note {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  border: 1px solid #b9d8cb;
+  border-radius: 7px;
+  padding: 8px 9px;
+  color: #17513d;
+  background: #f1faf6;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.job-notification-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.job-notification-note.failed {
+  border-color: #e0a2a2;
+  color: #842b2b;
+  background: #fff5f5;
 }
 
 .job-failure-card,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  BellRing,
   CircleAlert,
   CircleCheck,
   CircleDashed,
@@ -88,6 +89,10 @@ const HIDDEN_ADVANCED_PARAMETER_KEYS = new Set([
   "qq_mail_auth_code_env",
   "qq_mail_to_env",
 ]);
+
+const QQ_MAIL_ENV_TEMPLATE = `QQ_MAIL_USER=<发件 QQ 邮箱>
+QQ_MAIL_AUTH_CODE=<QQ 邮箱 SMTP 授权码>
+QQ_MAIL_TO=<接收通知的邮箱>`;
 
 const FALLBACK_PROCESSING_STEPS: ProcessingStepInfo[] = [
   { key: "unzip_s1", title: "解压 Sentinel-1 ZIP", description: "从原始 ZIP 数据解压。", required_inputs: ["task_root", "raw_zip_dir"] },
@@ -470,6 +475,7 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     [defaults],
   );
   const isCropEnabled = (inputs.enable_crop ?? "").trim().toLowerCase() !== "false";
+  const isNotificationEnabled = (inputs.notify_enabled ?? "false").trim().toLowerCase() === "true";
   const activeSteps = useMemo(() => (defaults ? selectedSteps(defaults, inputs) : []), [defaults, inputs]);
   const activeStepKeys = useMemo(() => new Set(activeSteps.map((step) => step.key)), [activeSteps]);
   const workflowSteps = useMemo(() => (defaults ? processingSteps(defaults) : []), [defaults]);
@@ -825,6 +831,31 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                 </>
               ) : null}
 
+              <section className="notification-settings">
+                <div className="processing-section-heading">
+                  <BellRing size={17} />
+                  <h3>消息通知</h3>
+                </div>
+                <label className="notification-toggle">
+                  <input
+                    type="checkbox"
+                    checked={isNotificationEnabled}
+                    onChange={(event) => updateInput("notify_enabled", event.target.checked ? "true" : "false")}
+                  />
+                  <span>
+                    <strong>处理结束后发送 QQ 邮件</strong>
+                    <small>任务成功、失败或手动停止时通知。未勾选时不发送，也不增加通知配置。</small>
+                  </span>
+                </label>
+                {isNotificationEnabled ? (
+                  <div className="notification-config-note">
+                    <strong>在运行 FastAPI 的 Linux 项目根目录 `.env.local` 中添加：</strong>
+                    <pre>{QQ_MAIL_ENV_TEMPLATE}</pre>
+                    <p>任务配置只记录“启用通知”，不会保存邮箱授权码、发件人或收件人。</p>
+                  </div>
+                ) : null}
+              </section>
+
               <details className="defaults-details">
                 <summary>高级默认参数，可展开修改</summary>
                 <div className="defaults-groups">
@@ -946,6 +977,12 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                       <strong>已自动归档旧结果</strong>
                       <span>{job.auto_archive_path}</span>
                       {(job.auto_archived_items ?? []).length ? <small>{job.auto_archived_items.join("、")}</small> : null}
+                    </div>
+                  ) : null}
+                  {job.notification_status ? (
+                    <div className={`job-notification-note ${/失败/.test(job.notification_status) ? "failed" : ""}`}>
+                      <BellRing size={15} />
+                      <span>{job.notification_status}</span>
                     </div>
                   ) : null}
                   {job.error ? (

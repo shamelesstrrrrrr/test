@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .processing_workflow import resolve_workflow_steps
+from .processing import send_processing_notification
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +93,17 @@ def is_failure_output(output: str) -> bool:
     return any(keyword in output for keyword in FAILED_KEYWORDS)
 
 
+def record_terminal_notification(job_path: Path, config_path: Path, log_path: Path) -> None:
+    job = load_job(job_path)
+    notification_status = send_processing_notification(config_path, job)
+    if not notification_status:
+        return
+    job["notification_status"] = notification_status
+    save_job(job_path, job)
+    append_log(log_path, "## 消息通知")
+    append_log(log_path, notification_status)
+
+
 def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) -> int:
     steps = resolve_workflow_steps(workflow)
 
@@ -125,6 +137,7 @@ def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) ->
         job["finished_at"] = utc_now()
         save_job(job_path, job)
         append_log(log_path, f"[{utc_now()}] job failed while loading config")
+        record_terminal_notification(job_path, config_path, log_path)
         return 1
 
     for step in steps:
@@ -149,6 +162,7 @@ def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) ->
             job["progress_percent"] = progress_percent(job)
             save_job(job_path, job)
             append_log(log_path, f"[{utc_now()}] job failed at {step.key}")
+            record_terminal_notification(job_path, config_path, log_path)
             return 1
 
         update_step(job_path, step.key, status="succeeded", message=output[-1000:], current_step=step.key)
@@ -162,6 +176,7 @@ def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) ->
     job["progress_percent"] = 100
     save_job(job_path, job)
     append_log(log_path, f"[{utc_now()}] job succeeded")
+    record_terminal_notification(job_path, config_path, log_path)
     return 0
 
 
@@ -190,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
             job["error"] = trace[-2000:]
             job["finished_at"] = utc_now()
             save_job(args.job_path, job)
+            record_terminal_notification(args.job_path, args.config_path, args.log_path)
         return 1
 
 

@@ -198,6 +198,7 @@ class ProcessingJobResponse(BaseModel):
     safety_notice: str
     auto_archive_path: str | None = None
     auto_archived_items: list[str] = Field(default_factory=list)
+    notification_status: str | None = None
 
 
 class ProcessingFileBrowserRoot(BaseModel):

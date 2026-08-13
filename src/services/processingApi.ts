@@ -121,6 +121,7 @@ export interface ProcessingJobResponse {
   safety_notice: string;
   auto_archive_path?: string | null;
   auto_archived_items: string[];
+  notification_status?: string | null;
 }
 
 export interface ProcessingFileBrowserRoot {

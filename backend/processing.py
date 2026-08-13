@@ -50,6 +50,7 @@ from task_defaults import (  # noqa: E402
     minimal_config_template,
     resolve_effective_inputs,
 )
+from notifier import load_getenv_file, notify_from_inputs  # noqa: E402
 
 
 SAFETY_NOTICE = "当前接口会生成和保存处理配置；只有显式确认并开启 PROCESSING_EXECUTION_ENABLED=true 后才会提交 Linux worker。"
@@ -62,6 +63,48 @@ BOOL_FIELDS = {
     "skip_extract_burst",
     "notify_enabled",
 }
+
+
+def _notification_is_enabled(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def send_processing_notification(config_path: Path, job: dict[str, Any]) -> str | None:
+    """Send an optional terminal-state email without storing credentials in task YAML."""
+    try:
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(config, dict) or not _notification_is_enabled(config.get("notify_enabled")):
+            return None
+
+        load_getenv_file()
+        status = str(job.get("status") or "unknown")
+        status_label = {
+            "succeeded": "已完成",
+            "failed": "失败",
+            "cancelled": "已停止",
+        }.get(status, status)
+        task_id = str(job.get("task_id") or "unknown_task")
+        current_step = str(job.get("current_step") or "无")
+        error = str(job.get("error") or "无")[:800]
+        content = "\n".join(
+            [
+                f"任务编号：{task_id}",
+                f"状态：{status_label}",
+                f"流程：{job.get('workflow') or 'unknown'}",
+                f"最后步骤：{current_step}",
+                f"日志：{job.get('log_path') or '未记录'}",
+                f"错误摘要：{error}",
+            ]
+        )
+        return notify_from_inputs(
+            config,
+            title=f"SAR/GAMMA 处理{status_label}：{task_id}",
+            content=content,
+        )
+    except Exception as exc:
+        return f"消息通知发送失败：{exc}"
 
 
 # These are the products whose contents depend on the selected crop window.
@@ -244,6 +287,10 @@ def _workflow_config(
             config[key] = DEFAULT_TASK_PARAMETERS[key]
         elif key in CROP_REQUIRED_INPUTS:
             config[key] = f"<{key.upper()}>"
+
+    if normalized.get("notify_enabled") is True:
+        config["notify_enabled"] = True
+        config["notify_channel"] = str(normalized.get("notify_channel") or "qq_mail")
 
     return config
 
@@ -583,6 +630,7 @@ def create_processing_job(settings: BackendSettings, task_id: str, workflow: str
         "safety_notice": _safety_notice(settings),
         "auto_archive_path": auto_archive_path,
         "auto_archived_items": auto_archived_items,
+        "notification_status": None,
     }
     job_path.write_text(json.dumps(job_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -662,5 +710,11 @@ def cancel_processing_job(settings: BackendSettings, task_id: str, job_id: str) 
 
     data["status"] = "cancelled"
     data["finished_at"] = _utc_now()
+    notification_status = send_processing_notification(Path(str(data["config_path"])), data)
+    if notification_status:
+        data["notification_status"] = notification_status
     job_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    if notification_status:
+        with Path(str(data["log_path"])).open("a", encoding="utf-8") as handle:
+            handle.write(f"\n## 消息通知\n{notification_status}\n")
     return _read_job(settings, job_path)
