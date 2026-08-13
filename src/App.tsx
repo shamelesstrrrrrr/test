@@ -2,8 +2,8 @@ import { type DragEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo,
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  AlertTriangle,
   BookOpen,
+  ChevronDown,
   Check,
   Copy,
   Crop,
@@ -489,37 +489,44 @@ function QueryTypePills({ types }: { types?: QueryType[] }) {
 }
 
 function SourceCard({ citation }: { citation: Citation }) {
+  const commandName = displayCitationValue(citation.command_name, "未关联具体命令");
+
   return (
     <article className="source-card">
       <div className="source-card-header">
         <BookOpen size={16} />
-        <strong>{citation.command_name}</strong>
+        <strong>{commandName}</strong>
       </div>
       <dl className="source-meta">
         <div>
-          <dt>source</dt>
+          <dt>来源</dt>
           <dd>{citation.source}</dd>
         </div>
         <div>
-          <dt>page</dt>
-          <dd>{citation.page}</dd>
+          <dt>页码</dt>
+          <dd>{displayCitationValue(citation.page, "未标注")}</dd>
         </div>
         <div>
-          <dt>section</dt>
-          <dd>{citation.section}</dd>
+          <dt>章节</dt>
+          <dd>{displayCitationValue(citation.section, "未标注")}</dd>
         </div>
         <div>
-          <dt>verification_status</dt>
+          <dt>证据状态</dt>
           <dd>{verificationLabels[citation.verification_status]}</dd>
         </div>
         <div>
-          <dt>retrieval_score</dt>
+          <dt>相关度</dt>
           <dd>{citation.retrieval_score.toFixed(2)}</dd>
         </div>
       </dl>
       <blockquote>{citation.excerpt}</blockquote>
     </article>
   );
+}
+
+function displayCitationValue(value: string, fallback: string) {
+  const text = value?.trim();
+  return !text || /^n\/a$/i.test(text) || text === "-" ? fallback : text;
 }
 
 function PendingMessage({ waitSeconds }: { waitSeconds: number }) {
@@ -937,7 +944,9 @@ function App() {
   const [processingDraftInputs, setProcessingDraftInputs] = useState<Record<string, string>>({});
   const [latestProcessingTask, setLatestProcessingTask] = useState<ProcessingTaskResponse | null>(null);
   const [latestProcessingJob, setLatestProcessingJob] = useState<ProcessingJobResponse | null>(null);
+  const [isMessageStreamAtBottom, setIsMessageStreamAtBottom] = useState(true);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const messageStreamRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
@@ -972,6 +981,29 @@ function App() {
         ?.citations ?? []
     );
   }, [activeSession, activeSourceMessageId]);
+
+  function scrollToLatestMessage(behavior: ScrollBehavior = "smooth") {
+    const stream = messageStreamRef.current;
+    if (!stream) return;
+    stream.scrollTo({ top: stream.scrollHeight, behavior });
+    setIsMessageStreamAtBottom(true);
+  }
+
+  function handleMessageStreamScroll() {
+    const stream = messageStreamRef.current;
+    if (!stream) return;
+    const remainingDistance = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
+    setIsMessageStreamAtBottom(remainingDistance < 48);
+  }
+
+  useEffect(() => {
+    window.requestAnimationFrame(() => scrollToLatestMessage("auto"));
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!isMessageStreamAtBottom) return;
+    window.requestAnimationFrame(() => scrollToLatestMessage("auto"));
+  }, [activeSession?.messages.length, isResponding, isMessageStreamAtBottom]);
 
   function updateSession(updated: ChatSession) {
     setSessions((current) => current.map((session) => (session.id === updated.id ? updated : session)));
@@ -1032,6 +1064,7 @@ function App() {
     };
 
     setInput("");
+    setIsMessageStreamAtBottom(true);
     setSessions((current) =>
       current.map((session) =>
         session.id === sessionId
@@ -1157,6 +1190,7 @@ function App() {
     setInput("");
     setIsResponding(true);
     setWaitSeconds(0);
+    setIsMessageStreamAtBottom(true);
     setSessions((current) =>
       current.map((session) =>
         session.id === sessionId
@@ -1317,6 +1351,7 @@ function App() {
                 onClick={() => {
                   setActiveSessionId(session.id);
                   setActiveSourceMessageId(null);
+                  setIsMessageStreamAtBottom(true);
                 }}
               >
                 <span>{session.title}</span>
@@ -1373,7 +1408,7 @@ function App() {
           ))}
         </div>
 
-        <div className="message-stream" aria-live="polite">
+        <div className="message-stream" aria-live="polite" ref={messageStreamRef} onScroll={handleMessageStreamScroll}>
           {activeSession.messages.map((message) => (
             <article className={`message ${message.role}`} key={message.id}>
               <div className="message-heading">
@@ -1412,6 +1447,18 @@ function App() {
           {isResponding && <PendingMessage waitSeconds={waitSeconds} />}
         </div>
 
+        {!isMessageStreamAtBottom ? (
+          <button
+            className="scroll-bottom-button"
+            type="button"
+            onClick={() => scrollToLatestMessage()}
+            title="跳到最新消息"
+            aria-label="跳到最新消息"
+          >
+            <ChevronDown size={18} />
+          </button>
+        ) : null}
+
         <form
           className={`composer ${isComposerDragOver ? "drag-over" : ""}`}
           onDragOver={handleComposerDragOver}
@@ -1422,10 +1469,6 @@ function App() {
             void sendQuestion();
           }}
         >
-          <div className="composer-alert">
-            <AlertTriangle size={15} />
-            当前版本不会执行 GAMMA、Shell、SSH、MCP 或任何真实处理任务；RAG 仅检索知识库并调用对话模型生成说明。
-          </div>
           {dropNotice ? <div className="composer-drop-note">{dropNotice}</div> : null}
           <div className="composer-box">
             <textarea
@@ -1451,7 +1494,7 @@ function App() {
         <div className="source-panel-heading">
           <div>
             <h2>文档来源</h2>
-            <p>source / page / command_name / section</p>
+            <p>来源 / 页码 / 命令 / 章节</p>
           </div>
           <Search size={18} />
         </div>

@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  Check,
-  Copy,
+  CircleAlert,
+  CircleCheck,
+  CircleDashed,
+  CircleX,
+  Clock3,
   FileCheck2,
   FolderOpen,
+  HardDrive,
+  ListChecks,
   Loader2,
+  RefreshCw,
   Save,
   ServerCog,
   X,
@@ -330,6 +336,52 @@ const JOB_STATUS_LABELS: Record<ProcessingJobResponse["status"], string> = {
   cancelled: "已停止",
 };
 
+type WorkflowStepStatus = ProcessingJobResponse["steps"][number]["status"] | "planned";
+
+const WORKFLOW_STEP_STATUS_LABELS: Record<WorkflowStepStatus, string> = {
+  planned: "已选择",
+  pending: "等待中",
+  running: "执行中",
+  succeeded: "已完成",
+  failed: "失败",
+  skipped: "已跳过",
+};
+
+function statusForWorkflowStep(job: ProcessingJobResponse | null, stepKey: string): WorkflowStepStatus {
+  return job?.steps.find((step) => step.key === stepKey)?.status ?? "planned";
+}
+
+function WorkflowStatusIcon({ status }: { status: WorkflowStepStatus }) {
+  if (status === "succeeded") return <CircleCheck size={16} />;
+  if (status === "failed") return <CircleX size={16} />;
+  if (status === "running") return <Loader2 size={16} />;
+  if (status === "skipped") return <CircleDashed size={16} />;
+  return <Clock3 size={16} />;
+}
+
+function summarizeProcessingError(error: string) {
+  const lines = error
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const keyLine = lines.find((line) => /ERROR:|失败|Traceback|cannot|No module|不存在/i.test(line));
+  return (keyLine ?? lines[0] ?? "任务未完成，请查看详细错误。").slice(0, 260);
+}
+
+function formatFileBrowserSize(size?: number | null) {
+  if (size == null) return "-";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function formatFileBrowserTime(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "-" : date.toLocaleString("zh-CN", { hour12: false });
+}
+
 type BrowserTarget = {
   fieldKey: string;
   label: string;
@@ -343,7 +395,6 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
   const [createdTask, setCreatedTask] = useState<ProcessingTaskResponse | null>(null);
   const [job, setJob] = useState<ProcessingJobResponse | null>(null);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [browserTarget, setBrowserTarget] = useState<BrowserTarget | null>(null);
@@ -658,13 +709,6 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     }
   }
 
-  async function copyYaml() {
-    if (!preview?.config_yaml) return;
-    await navigator.clipboard.writeText(preview.config_yaml);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1200);
-  }
-
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="数据处理任务配置">
       <section className="processing-modal">
@@ -686,11 +730,6 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
         ) : (
           <div className="processing-body">
             <section className="processing-form-panel">
-              <div className="processing-notice">
-                <AlertTriangle size={16} />
-                <span>{defaults?.safety_notice}</span>
-              </div>
-
               <div className="processing-section-heading">
                 <ServerCog size={17} />
                 <h3>处理范围</h3>
@@ -840,6 +879,28 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                 )}
               </div>
 
+              <section className="workflow-status-card">
+                <div className="workflow-status-heading">
+                  <div>
+                    <ListChecks size={17} />
+                    <strong>{job ? "实时流程状态" : "本次执行流程"}</strong>
+                  </div>
+                  <span>{activeSteps.length} 步</span>
+                </div>
+                <ol className="workflow-status-list">
+                  {activeSteps.map((step) => {
+                    const status = statusForWorkflowStep(job, step.key);
+                    return (
+                      <li className={`workflow-status-item ${status}`} key={step.key}>
+                        <WorkflowStatusIcon status={status} />
+                        <span>{step.title}</span>
+                        <small>{WORKFLOW_STEP_STATUS_LABELS[status]}</small>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
+
               {preview?.missing.length ? (
                 <div className="missing-list">
                   <strong>缺少字段</strong>
@@ -852,39 +913,74 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
               ) : null}
 
               {createdTask ? (
-                <div className="created-task-box">
-                  <strong>任务草稿已保存</strong>
-                  <p>task_id：{createdTask.task_id}</p>
-                  <p>config：{createdTask.config_path}</p>
-                  <p>metadata：{createdTask.metadata_path}</p>
+                <div className="task-status-card saved">
+                  <CircleCheck size={17} />
+                  <div>
+                    <strong>配置草稿已保存</strong>
+                    <p>任务编号：{createdTask.task_id}</p>
+                  </div>
                 </div>
               ) : null}
 
               {job ? (
                 <div className="processing-job-box">
-                  <strong>处理任务</strong>
-                  <p>job_id：{job.job_id}</p>
-                  <p>status：{JOB_STATUS_LABELS[job.status]}</p>
-                  <p>log：{job.log_path}</p>
-                  {job.auto_archive_path ? <p>自动归档：{job.auto_archive_path}</p> : null}
-                  {(job.auto_archived_items ?? []).length ? <p>已归档：{job.auto_archived_items.join("、")}</p> : null}
-                  {job.error ? <p>error：{job.error}</p> : null}
-                  {job.log_tail ? <pre>{job.log_tail}</pre> : null}
+                  <div className="job-card-heading">
+                    <div>
+                      {job.status === "failed" ? <CircleAlert size={17} /> : <HardDrive size={17} />}
+                      <strong>Linux 处理任务</strong>
+                    </div>
+                    <span className={`job-status-badge ${job.status}`}>{JOB_STATUS_LABELS[job.status]}</span>
+                  </div>
+                  <dl className="job-meta-grid">
+                    <div>
+                      <dt>任务编号</dt>
+                      <dd>{job.job_id}</dd>
+                    </div>
+                    <div>
+                      <dt>日志</dt>
+                      <dd>{job.log_path}</dd>
+                    </div>
+                  </dl>
+                  {job.auto_archive_path ? (
+                    <div className="job-archive-note">
+                      <strong>已自动归档旧结果</strong>
+                      <span>{job.auto_archive_path}</span>
+                      {(job.auto_archived_items ?? []).length ? <small>{job.auto_archived_items.join("、")}</small> : null}
+                    </div>
+                  ) : null}
+                  {job.error ? (
+                    <div className="job-failure-card">
+                      <CircleAlert size={17} />
+                      <div>
+                        <strong>任务在此停止</strong>
+                        <p>{summarizeProcessingError(job.error)}</p>
+                        <details>
+                          <summary>查看完整错误</summary>
+                          <pre>{job.error}</pre>
+                        </details>
+                      </div>
+                    </div>
+                  ) : null}
+                  {job.log_tail ? (
+                    <details className="job-log-details">
+                      <summary>查看最近日志</summary>
+                      <pre>{job.log_tail}</pre>
+                    </details>
+                  ) : null}
                 </div>
               ) : null}
 
-              <div className="yaml-preview-toolbar">
-                <span>task.yaml</span>
-                <button className="icon-button subtle" type="button" onClick={copyYaml} title="复制 YAML">
-                  {copied ? <Check size={15} /> : <Copy size={15} />}
-                </button>
-              </div>
-              <pre className="yaml-preview">{preview?.config_yaml ?? ""}</pre>
-
               {error ? (
                 <div className="processing-error">
-                  <AlertTriangle size={15} />
-                  {error}
+                  <CircleAlert size={17} />
+                  <div>
+                    <strong>操作未完成</strong>
+                    <p>{summarizeProcessingError(error)}</p>
+                    <details>
+                      <summary>查看完整错误</summary>
+                      <pre>{error}</pre>
+                    </details>
+                  </div>
                 </div>
               ) : null}
 
@@ -925,6 +1021,16 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
               </header>
 
               <div className="file-browser-path-row">
+                {browserData?.parent_path ? (
+                  <button
+                    className="icon-button subtle"
+                    type="button"
+                    onClick={() => void loadBrowserPath(browserData.parent_path ?? undefined)}
+                    title="上一级目录"
+                  >
+                    <FolderOpen size={16} />
+                  </button>
+                ) : null}
                 <input
                   value={browserPath}
                   onChange={(event) => setBrowserPath(event.target.value)}
@@ -933,9 +1039,8 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                   }}
                   placeholder="/home/yu"
                 />
-                <button className="icon-text-button" type="button" onClick={() => void loadBrowserPath(browserPath)}>
-                  {isBrowserLoading ? <Loader2 size={15} /> : <FolderOpen size={15} />}
-                  打开
+                <button className="icon-button subtle" type="button" onClick={() => void loadBrowserPath(browserPath)} title="刷新目录">
+                  {isBrowserLoading ? <Loader2 size={16} /> : <RefreshCw size={16} />}
                 </button>
               </div>
 
@@ -957,17 +1062,19 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
               ) : null}
 
               <div className="file-browser-list">
-                {browserData?.parent_path ? (
-                  <button className="file-browser-parent" type="button" onClick={() => void loadBrowserPath(browserData.parent_path ?? undefined)}>
-                    <FolderOpen size={15} />
-                    上一级
-                  </button>
-                ) : null}
+                <div className="file-browser-table-heading" aria-hidden="true">
+                  <span>名称</span>
+                  <span>类型</span>
+                  <span>修改时间</span>
+                  <span>大小</span>
+                  <span />
+                </div>
                 {browserData?.entries.map((entry) => (
                   <div className={`file-browser-entry ${entry.is_dir ? "is-dir" : ""}`} key={entry.path}>
                     <button
                       className="file-browser-entry-main"
                       type="button"
+                      title={entry.path}
                       onClick={() => {
                         if (entry.is_dir) {
                           void loadBrowserPath(entry.path);
@@ -979,9 +1086,12 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                       {entry.is_dir ? <FolderOpen size={16} /> : <FileCheck2 size={16} />}
                       <span>
                         <strong>{entry.name}</strong>
-                        <small>{entry.path}</small>
+                        <small className="file-browser-entry-path">{entry.path}</small>
                       </span>
                     </button>
+                    <small className="file-browser-entry-kind">{entry.is_dir ? "文件夹" : "文件"}</small>
+                    <small className="file-browser-entry-time">{formatFileBrowserTime(entry.modified_at)}</small>
+                    <small className="file-browser-entry-size">{formatFileBrowserSize(entry.size)}</small>
                     {canSelectBrowserEntry(entry) ? (
                       <button className="file-browser-select" type="button" onClick={() => selectBrowserPath(entry.path)}>
                         选择
