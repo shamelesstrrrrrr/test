@@ -124,6 +124,13 @@ export interface ProcessingJobResponse {
   notification_status?: string | null;
 }
 
+export interface ProcessingNotificationInput {
+  enabled: boolean;
+  qq_mail_user?: string;
+  qq_mail_auth_code?: string;
+  qq_mail_to?: string;
+}
+
 export interface ProcessingFileBrowserRoot {
   name: string;
   path: string;
@@ -235,13 +242,17 @@ export async function createProcessingTask(inputs: Record<string, unknown>): Pro
   });
 }
 
-export async function createProcessingJob(taskId: string, workflow = "configured"): Promise<ProcessingJobResponse> {
+export async function createProcessingJob(
+  taskId: string,
+  workflow = "configured",
+  notification?: ProcessingNotificationInput,
+): Promise<ProcessingJobResponse> {
   return fetchProcessingApi<ProcessingJobResponse>("/jobs", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ task_id: taskId, workflow }),
+    body: JSON.stringify({ task_id: taskId, workflow, notification }),
   });
 }
 

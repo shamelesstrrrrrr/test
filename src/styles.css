@@ -1423,16 +1423,11 @@ button {
   font-size: 12px;
 }
 
-.notification-config-note pre {
-  overflow: auto;
+.notification-input-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
   margin: 8px 0;
-  border-radius: 6px;
-  padding: 9px;
-  color: #d9f1e4;
-  background: #19342a;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  line-height: 1.55;
 }
 
 .notification-config-note p {
@@ -1947,7 +1942,8 @@ button {
   }
 
   .processing-field-grid,
-  .processing-field-grid.compact {
+  .processing-field-grid.compact,
+  .notification-input-grid {
     grid-template-columns: 1fr;
   }
 

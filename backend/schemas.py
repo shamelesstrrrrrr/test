@@ -160,9 +160,17 @@ ProcessingJobStatus = Literal[
 ]
 
 
+class ProcessingNotificationRequest(BaseModel):
+    enabled: bool = False
+    qq_mail_user: str | None = None
+    qq_mail_auth_code: str | None = None
+    qq_mail_to: str | None = None
+
+
 class ProcessingJobCreateRequest(BaseModel):
     task_id: str
     workflow: str = "configured"
+    notification: ProcessingNotificationRequest | None = None
 
 
 class ProcessingJobStep(BaseModel):

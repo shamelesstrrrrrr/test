@@ -171,7 +171,8 @@ def processing_task_get(task_id: str) -> ProcessingTaskResponse:
 @app.post("/api/processing/jobs", response_model=ProcessingJobResponse)
 def processing_job_create(request: ProcessingJobCreateRequest) -> ProcessingJobResponse:
     try:
-        return create_processing_job(settings(), request.task_id, workflow=request.workflow)
+        notification = request.notification.model_dump() if request.notification else None
+        return create_processing_job(settings(), request.task_id, workflow=request.workflow, notification=notification)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (RuntimeError, ValueError) as exc:

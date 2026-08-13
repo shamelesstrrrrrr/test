@@ -53,6 +53,24 @@ def send_qq_mail(
     if not mail_to:
         return f"QQ 邮件通知失败：未找到环境变量 {to_env}"
 
+    return send_qq_mail_with_credentials(
+        title=title,
+        content=content,
+        mail_user=mail_user,
+        auth_code=auth_code,
+        mail_to=mail_to,
+    )
+
+
+def send_qq_mail_with_credentials(
+    title: str,
+    content: str,
+    mail_user: str,
+    auth_code: str,
+    mail_to: str,
+) -> str:
+    """Send a QQ email with credentials supplied by a trusted caller."""
+
     message = MIMEText(content, "plain", "utf-8")
     message["From"] = mail_user
     message["To"] = mail_to

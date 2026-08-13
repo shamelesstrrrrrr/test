@@ -26,6 +26,7 @@ import {
   fetchProcessingJob,
   previewProcessingConfig,
   type ProcessingJobResponse,
+  type ProcessingNotificationInput,
   type ProcessingConfigPreviewResponse,
   type ProcessingDefaultsResponse,
   type ProcessingFileBrowserEntry,
@@ -89,10 +90,6 @@ const HIDDEN_ADVANCED_PARAMETER_KEYS = new Set([
   "qq_mail_auth_code_env",
   "qq_mail_to_env",
 ]);
-
-const QQ_MAIL_ENV_TEMPLATE = `QQ_MAIL_USER=<发件 QQ 邮箱>
-QQ_MAIL_AUTH_CODE=<QQ 邮箱 SMTP 授权码>
-QQ_MAIL_TO=<接收通知的邮箱>`;
 
 const FALLBACK_PROCESSING_STEPS: ProcessingStepInfo[] = [
   { key: "unzip_s1", title: "解压 Sentinel-1 ZIP", description: "从原始 ZIP 数据解压。", required_inputs: ["task_root", "raw_zip_dir"] },
@@ -407,6 +404,12 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
   const [browserPath, setBrowserPath] = useState("");
   const [browserError, setBrowserError] = useState("");
   const [isBrowserLoading, setIsBrowserLoading] = useState(false);
+  const [notificationEnabled, setNotificationEnabled] = useState(false);
+  const [notificationInputs, setNotificationInputs] = useState({
+    qq_mail_user: "",
+    qq_mail_auth_code: "",
+    qq_mail_to: "",
+  });
 
   useEffect(() => {
     let alive = true;
@@ -475,7 +478,6 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     [defaults],
   );
   const isCropEnabled = (inputs.enable_crop ?? "").trim().toLowerCase() !== "false";
-  const isNotificationEnabled = (inputs.notify_enabled ?? "false").trim().toLowerCase() === "true";
   const activeSteps = useMemo(() => (defaults ? selectedSteps(defaults, inputs) : []), [defaults, inputs]);
   const activeStepKeys = useMemo(() => new Set(activeSteps.map((step) => step.key)), [activeSteps]);
   const workflowSteps = useMemo(() => (defaults ? processingSteps(defaults) : []), [defaults]);
@@ -691,7 +693,19 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
         );
       }
 
-      const nextJob = await createProcessingJob(task.task_id);
+      const notification: ProcessingNotificationInput | undefined = notificationEnabled
+        ? {
+            enabled: true,
+            qq_mail_user: notificationInputs.qq_mail_user.trim(),
+            qq_mail_auth_code: notificationInputs.qq_mail_auth_code.trim(),
+            qq_mail_to: notificationInputs.qq_mail_to.trim(),
+          }
+        : undefined;
+      if (notificationEnabled && (!notification?.qq_mail_user || !notification.qq_mail_auth_code || !notification.qq_mail_to)) {
+        throw new Error("已启用消息通知，请填写发件 QQ 邮箱、SMTP 授权码和收件邮箱。");
+      }
+
+      const nextJob = await createProcessingJob(task.task_id, "configured", notification);
       setJob(nextJob);
       onJobStarted?.(nextJob);
     } catch (jobError) {
@@ -839,19 +853,49 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                 <label className="notification-toggle">
                   <input
                     type="checkbox"
-                    checked={isNotificationEnabled}
-                    onChange={(event) => updateInput("notify_enabled", event.target.checked ? "true" : "false")}
+                    checked={notificationEnabled}
+                    onChange={(event) => setNotificationEnabled(event.target.checked)}
                   />
                   <span>
                     <strong>处理结束后发送 QQ 邮件</strong>
-                    <small>任务成功、失败或手动停止时通知。未勾选时不发送，也不增加通知配置。</small>
+                    <small>任务成功、失败或手动停止时通知。未勾选时不发送。</small>
                   </span>
                 </label>
-                {isNotificationEnabled ? (
+                {notificationEnabled ? (
                   <div className="notification-config-note">
-                    <strong>在运行 FastAPI 的 Linux 项目根目录 `.env.local` 中添加：</strong>
-                    <pre>{QQ_MAIL_ENV_TEMPLATE}</pre>
-                    <p>任务配置只记录“启用通知”，不会保存邮箱授权码、发件人或收件人。</p>
+                    <div className="notification-input-grid">
+                      <label className="processing-field">
+                        <span>发件 QQ 邮箱</span>
+                        <input
+                          type="email"
+                          autoComplete="email"
+                          value={notificationInputs.qq_mail_user}
+                          onChange={(event) => setNotificationInputs((current) => ({ ...current, qq_mail_user: event.target.value }))}
+                          placeholder="name@qq.com"
+                        />
+                      </label>
+                      <label className="processing-field">
+                        <span>QQ 邮箱 SMTP 授权码</span>
+                        <input
+                          type="password"
+                          autoComplete="new-password"
+                          value={notificationInputs.qq_mail_auth_code}
+                          onChange={(event) => setNotificationInputs((current) => ({ ...current, qq_mail_auth_code: event.target.value }))}
+                          placeholder="QQ 邮箱生成的授权码"
+                        />
+                      </label>
+                      <label className="processing-field">
+                        <span>收件邮箱</span>
+                        <input
+                          type="email"
+                          autoComplete="email"
+                          value={notificationInputs.qq_mail_to}
+                          onChange={(event) => setNotificationInputs((current) => ({ ...current, qq_mail_to: event.target.value }))}
+                          placeholder="receiver@example.com"
+                        />
+                      </label>
+                    </div>
+                    <p>仅在本次点击“开始处理”时使用，凭据不会写入 YAML、日志、任务状态或 Git；请仅在可信网络中填写。</p>
                   </div>
                 ) : null}
               </section>

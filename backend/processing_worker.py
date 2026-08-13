@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .processing_workflow import resolve_workflow_steps
-from .processing import send_processing_notification
+from .processing import consume_runtime_notification_from_environment, send_processing_notification
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -93,9 +93,9 @@ def is_failure_output(output: str) -> bool:
     return any(keyword in output for keyword in FAILED_KEYWORDS)
 
 
-def record_terminal_notification(job_path: Path, config_path: Path, log_path: Path) -> None:
+def record_terminal_notification(job_path: Path, log_path: Path, notification: dict[str, str] | None) -> None:
     job = load_job(job_path)
-    notification_status = send_processing_notification(config_path, job)
+    notification_status = send_processing_notification(job, notification=notification)
     if not notification_status:
         return
     job["notification_status"] = notification_status
@@ -104,7 +104,13 @@ def record_terminal_notification(job_path: Path, config_path: Path, log_path: Pa
     append_log(log_path, notification_status)
 
 
-def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) -> int:
+def run_job(
+    job_path: Path,
+    config_path: Path,
+    log_path: Path,
+    workflow: str,
+    notification: dict[str, str] | None = None,
+) -> int:
     steps = resolve_workflow_steps(workflow)
 
     job = load_job(job_path)
@@ -137,7 +143,7 @@ def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) ->
         job["finished_at"] = utc_now()
         save_job(job_path, job)
         append_log(log_path, f"[{utc_now()}] job failed while loading config")
-        record_terminal_notification(job_path, config_path, log_path)
+        record_terminal_notification(job_path, log_path, notification)
         return 1
 
     for step in steps:
@@ -162,7 +168,7 @@ def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) ->
             job["progress_percent"] = progress_percent(job)
             save_job(job_path, job)
             append_log(log_path, f"[{utc_now()}] job failed at {step.key}")
-            record_terminal_notification(job_path, config_path, log_path)
+            record_terminal_notification(job_path, log_path, notification)
             return 1
 
         update_step(job_path, step.key, status="succeeded", message=output[-1000:], current_step=step.key)
@@ -176,7 +182,7 @@ def run_job(job_path: Path, config_path: Path, log_path: Path, workflow: str) ->
     job["progress_percent"] = 100
     save_job(job_path, job)
     append_log(log_path, f"[{utc_now()}] job succeeded")
-    record_terminal_notification(job_path, config_path, log_path)
+    record_terminal_notification(job_path, log_path, notification)
     return 0
 
 
@@ -192,9 +198,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    notification = consume_runtime_notification_from_environment()
 
     try:
-        return run_job(args.job_path, args.config_path, args.log_path, args.workflow)
+        return run_job(args.job_path, args.config_path, args.log_path, args.workflow, notification=notification)
     except Exception:
         trace = traceback.format_exc()
         append_log(args.log_path, trace)
@@ -205,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
             job["error"] = trace[-2000:]
             job["finished_at"] = utc_now()
             save_job(args.job_path, job)
-            record_terminal_notification(args.job_path, args.config_path, args.log_path)
+            record_terminal_notification(args.job_path, args.log_path, notification)
         return 1
 
 

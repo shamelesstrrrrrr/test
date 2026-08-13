@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,7 @@ from task_defaults import (  # noqa: E402
     minimal_config_template,
     resolve_effective_inputs,
 )
-from notifier import load_getenv_file, notify_from_inputs  # noqa: E402
+from notifier import send_qq_mail_with_credentials  # noqa: E402
 
 
 SAFETY_NOTICE = "当前接口会生成和保存处理配置；只有显式确认并开启 PROCESSING_EXECUTION_ENABLED=true 后才会提交 Linux worker。"
@@ -65,46 +66,96 @@ BOOL_FIELDS = {
 }
 
 
+RUNTIME_NOTIFICATION_ENABLED_ENV = "SAR_ASSISTANT_NOTIFY_ENABLED"
+RUNTIME_NOTIFICATION_USER_ENV = "SAR_ASSISTANT_QQ_MAIL_USER"
+RUNTIME_NOTIFICATION_AUTH_CODE_ENV = "SAR_ASSISTANT_QQ_MAIL_AUTH_CODE"
+RUNTIME_NOTIFICATION_TO_ENV = "SAR_ASSISTANT_QQ_MAIL_TO"
+_ACTIVE_JOB_NOTIFICATIONS: dict[str, dict[str, str]] = {}
+_ACTIVE_JOB_NOTIFICATIONS_LOCK = threading.Lock()
+
+
 def _notification_is_enabled(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def send_processing_notification(config_path: Path, job: dict[str, Any]) -> str | None:
-    """Send an optional terminal-state email without storing credentials in task YAML."""
-    try:
-        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        if not isinstance(config, dict) or not _notification_is_enabled(config.get("notify_enabled")):
-            return None
+def _normalized_runtime_notification(notification: dict[str, Any] | None) -> dict[str, str] | None:
+    if not notification or not _notification_is_enabled(notification.get("enabled")):
+        return None
 
-        load_getenv_file()
-        status = str(job.get("status") or "unknown")
-        status_label = {
-            "succeeded": "已完成",
-            "failed": "失败",
-            "cancelled": "已停止",
-        }.get(status, status)
-        task_id = str(job.get("task_id") or "unknown_task")
-        current_step = str(job.get("current_step") or "无")
-        error = str(job.get("error") or "无")[:800]
-        content = "\n".join(
-            [
-                f"任务编号：{task_id}",
-                f"状态：{status_label}",
-                f"流程：{job.get('workflow') or 'unknown'}",
-                f"最后步骤：{current_step}",
-                f"日志：{job.get('log_path') or '未记录'}",
-                f"错误摘要：{error}",
-            ]
-        )
-        return notify_from_inputs(
-            config,
-            title=f"SAR/GAMMA 处理{status_label}：{task_id}",
+    values = {
+        "qq_mail_user": str(notification.get("qq_mail_user") or "").strip(),
+        "qq_mail_auth_code": str(notification.get("qq_mail_auth_code") or "").strip(),
+        "qq_mail_to": str(notification.get("qq_mail_to") or "").strip(),
+    }
+    missing = [key for key, value in values.items() if not value]
+    if missing:
+        raise ValueError(f"已启用消息通知，但缺少：{', '.join(missing)}")
+    if any("\n" in value or "\r" in value for value in values.values()):
+        raise ValueError("消息通知字段不能包含换行符")
+    return values
+
+
+def consume_runtime_notification_from_environment() -> dict[str, str] | None:
+    """Read once then remove credentials before GAMMA child processes are launched."""
+    enabled = os.environ.pop(RUNTIME_NOTIFICATION_ENABLED_ENV, None)
+    notification = {
+        "enabled": enabled,
+        "qq_mail_user": os.environ.pop(RUNTIME_NOTIFICATION_USER_ENV, None),
+        "qq_mail_auth_code": os.environ.pop(RUNTIME_NOTIFICATION_AUTH_CODE_ENV, None),
+        "qq_mail_to": os.environ.pop(RUNTIME_NOTIFICATION_TO_ENV, None),
+    }
+    return _normalized_runtime_notification(notification)
+
+
+def _notification_title_and_content(job: dict[str, Any]) -> tuple[str, str]:
+    status = str(job.get("status") or "unknown")
+    status_label = {
+        "succeeded": "已完成",
+        "failed": "失败",
+        "cancelled": "已停止",
+    }.get(status, status)
+    task_id = str(job.get("task_id") or "unknown_task")
+    current_step = str(job.get("current_step") or "无")
+    error = str(job.get("error") or "无")[:800]
+    content = "\n".join(
+        [
+            f"任务编号：{task_id}",
+            f"状态：{status_label}",
+            f"流程：{job.get('workflow') or 'unknown'}",
+            f"最后步骤：{current_step}",
+            f"日志：{job.get('log_path') or '未记录'}",
+            f"错误摘要：{error}",
+        ]
+    )
+    return f"SAR/GAMMA 处理{status_label}：{task_id}", content
+
+
+def send_processing_notification(job: dict[str, Any], notification: dict[str, Any] | None = None) -> str | None:
+    """Send a terminal-state email using credentials held only in process memory."""
+    try:
+        runtime_notification = _normalized_runtime_notification(notification)
+        if not runtime_notification:
+            return None
+        title, content = _notification_title_and_content(job)
+        return send_qq_mail_with_credentials(
+            title=title,
             content=content,
+            mail_user=runtime_notification["qq_mail_user"],
+            auth_code=runtime_notification["qq_mail_auth_code"],
+            mail_to=runtime_notification["qq_mail_to"],
         )
     except Exception as exc:
         return f"消息通知发送失败：{exc}"
+
+
+def _discard_notification_after_worker(job_id: str, process: subprocess.Popen[str]) -> None:
+    try:
+        process.wait()
+    finally:
+        with _ACTIVE_JOB_NOTIFICATIONS_LOCK:
+            _ACTIVE_JOB_NOTIFICATIONS.pop(job_id, None)
 
 
 # These are the products whose contents depend on the selected crop window.
@@ -287,10 +338,6 @@ def _workflow_config(
             config[key] = DEFAULT_TASK_PARAMETERS[key]
         elif key in CROP_REQUIRED_INPUTS:
             config[key] = f"<{key.upper()}>"
-
-    if normalized.get("notify_enabled") is True:
-        config["notify_enabled"] = True
-        config["notify_channel"] = str(normalized.get("notify_channel") or "qq_mail")
 
     return config
 
@@ -581,7 +628,12 @@ def _archive_existing_outputs_for_workflow(inputs: dict[str, Any], workflow: str
     return str(archive_dir), moved_items
 
 
-def create_processing_job(settings: BackendSettings, task_id: str, workflow: str = "configured") -> ProcessingJobResponse:
+def create_processing_job(
+    settings: BackendSettings,
+    task_id: str,
+    workflow: str = "configured",
+    notification: dict[str, Any] | None = None,
+) -> ProcessingJobResponse:
     if not settings.processing_execution_enabled:
         raise RuntimeError("真实处理未开启：请在后端环境变量中设置 PROCESSING_EXECUTION_ENABLED=true 后重启 FastAPI。")
 
@@ -596,6 +648,7 @@ def create_processing_job(settings: BackendSettings, task_id: str, workflow: str
         raise ValueError(f"配置仍有缺失字段，不能开始处理：{missing}")
 
     effective = _effective_inputs_for_task(task)
+    runtime_notification = _normalized_runtime_notification(notification)
     auto_archive_path, auto_archived_items = _archive_existing_outputs_for_workflow(effective, resolved_workflow)
 
     task_dir = Path(task.task_dir)
@@ -664,14 +717,31 @@ def create_processing_job(settings: BackendSettings, task_id: str, workflow: str
         "stderr": subprocess.STDOUT,
         "text": True,
     }
+    if runtime_notification:
+        process_env = os.environ.copy()
+        process_env.update(
+            {
+                RUNTIME_NOTIFICATION_ENABLED_ENV: "true",
+                RUNTIME_NOTIFICATION_USER_ENV: runtime_notification["qq_mail_user"],
+                RUNTIME_NOTIFICATION_AUTH_CODE_ENV: runtime_notification["qq_mail_auth_code"],
+                RUNTIME_NOTIFICATION_TO_ENV: runtime_notification["qq_mail_to"],
+            }
+        )
+        popen_kwargs["env"] = process_env
     if os.name != "nt":
         popen_kwargs["start_new_session"] = True
 
-    process = subprocess.Popen(command, **popen_kwargs)
-    log_handle.close()
+    try:
+        process = subprocess.Popen(command, **popen_kwargs)
+    finally:
+        log_handle.close()
 
     job_data["pid"] = process.pid
     job_path.write_text(json.dumps(job_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    if runtime_notification:
+        with _ACTIVE_JOB_NOTIFICATIONS_LOCK:
+            _ACTIVE_JOB_NOTIFICATIONS[job_id] = runtime_notification
+        threading.Thread(target=_discard_notification_after_worker, args=(job_id, process), daemon=True).start()
     return _read_job(settings, job_path)
 
 
@@ -692,6 +762,8 @@ def cancel_processing_job(settings: BackendSettings, task_id: str, job_id: str) 
         return _read_job(settings, job_path)
 
     pid = data.get("pid")
+    with _ACTIVE_JOB_NOTIFICATIONS_LOCK:
+        runtime_notification = _ACTIVE_JOB_NOTIFICATIONS.get(job_id)
     data["status"] = "cancel_requested"
     data["finished_at"] = data.get("finished_at") or _utc_now()
     data["error"] = "用户请求停止处理任务。"
@@ -710,11 +782,13 @@ def cancel_processing_job(settings: BackendSettings, task_id: str, job_id: str) 
 
     data["status"] = "cancelled"
     data["finished_at"] = _utc_now()
-    notification_status = send_processing_notification(Path(str(data["config_path"])), data)
+    notification_status = send_processing_notification(data, notification=runtime_notification)
     if notification_status:
         data["notification_status"] = notification_status
     job_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     if notification_status:
         with Path(str(data["log_path"])).open("a", encoding="utf-8") as handle:
             handle.write(f"\n## 消息通知\n{notification_status}\n")
+    with _ACTIVE_JOB_NOTIFICATIONS_LOCK:
+        _ACTIVE_JOB_NOTIFICATIONS.pop(job_id, None)
     return _read_job(settings, job_path)
