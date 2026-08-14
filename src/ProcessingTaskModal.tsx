@@ -63,7 +63,6 @@ const FIELD_LABELS: Record<string, string> = {
   satellite: "卫星",
   polarization: "极化",
   swath: "子波束",
-  enable_crop: "是否裁剪",
   diff_method: "差分方法",
   shp_method: "SHP 方法",
   phase_opt_method: "相位优化方法",
@@ -77,7 +76,7 @@ const FIELD_LABELS: Record<string, string> = {
 
 const BASIC_INPUT_KEYS = ["task_id", "task_root", "raw_zip_dir", "raw_data_dir", "dem_file", "master_date", "orbit_dir", "env_scripts", "matlab_func_dir"];
 const SLC_INPUT_KEYS = ["satellite", "polarization", "swath", "bn_start1", "bn_end1"];
-const METHOD_INPUT_KEYS = ["coregistration_method", "enable_crop", "diff_method", "shp_method", "phase_opt_method", "point_selection_method", "stamps_mode"];
+const METHOD_INPUT_KEYS = ["coregistration_method", "diff_method", "shp_method", "phase_opt_method", "point_selection_method", "stamps_mode"];
 const PATH_FIELD_MODES: Record<string, "file" | "directory" | "any"> = {
   task_root: "directory",
   raw_zip_dir: "any",
@@ -104,7 +103,7 @@ const FALLBACK_PROCESSING_STEPS: ProcessingStepInfo[] = [
   { key: "extract_burst", title: "提取 Burst", description: "提取 burst 范围。", required_inputs: ["task_root", "env_scripts", "polarization", "swath", "bn_start1", "bn_end1"], default_inputs: ["bn_start2", "bn_end2", "bn_start3", "bn_end3"] },
   { key: "slc_geo", title: "主影像地理编码", description: "生成主影像地理编码结果。", required_inputs: ["task_root", "env_scripts", "dem_file", "master_date"], default_inputs: ["range_looks", "azimuth_looks", "lat_ovr", "lon_ovr"] },
   { key: "coregistration", title: "主从影像配准", description: "进行主从影像配准。", required_inputs: ["task_root", "env_scripts", "polarization", "swath"] },
-  { key: "crop_rslc", title: "RSLC 裁剪", description: "裁剪 RSLC。", required_inputs: ["task_root", "env_scripts", "master_date", "polarization", "swath"], default_inputs: ["enable_crop", "data_format", "scale_factor"] },
+  { key: "crop_rslc", title: "RSLC 裁剪", description: "裁剪 RSLC。", required_inputs: ["task_root", "env_scripts", "master_date", "polarization", "swath"], default_inputs: ["data_format", "scale_factor"] },
   { key: "write_rslc_tab", title: "生成 RSLC_tab", description: "生成 RSLC_tab。", required_inputs: ["task_root"], default_inputs: ["rslc_template", "rslc_par_template"] },
   { key: "base_calc", title: "生成基线和 itab", description: "生成基线和 itab。", required_inputs: ["task_root", "env_scripts", "master_date"], default_inputs: ["itab_type", "base_calc_plot_flag", "bperp_min", "bperp_max", "delta_t_min", "delta_t_max", "delta_n_max"] },
   { key: "mk_mli_all", title: "生成 RMLI 强度图", description: "生成多视强度图。", required_inputs: ["task_root", "env_scripts"], default_inputs: ["rlks", "azlks"] },
@@ -202,11 +201,7 @@ function selectedSteps(defaults: ProcessingDefaultsResponse, inputs: Record<stri
   return steps.slice(startIndex, endIndex + 1);
 }
 
-function requiredKeysForSelectedSteps(
-  defaults: ProcessingDefaultsResponse,
-  inputs: Record<string, string>,
-  isCropEnabled: boolean,
-) {
+function requiredKeysForSelectedSteps(defaults: ProcessingDefaultsResponse, inputs: Record<string, string>) {
   const keys: string[] = [];
   const steps = selectedSteps(defaults, inputs);
   const profile = selectedSensorProfile(defaults, inputs);
@@ -229,7 +224,7 @@ function requiredKeysForSelectedSteps(
 
     step.required_inputs.forEach((key) => addUnique(keys, key));
 
-    if (step.key === "crop_rslc" && isCropEnabled) {
+    if (step.key === "crop_rslc") {
       defaults.crop_inputs.forEach((field) => addUnique(keys, field.key));
     }
 
@@ -526,15 +521,14 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     () => (defaults ? selectedSensorProfile(defaults, inputs) : undefined),
     [defaults, inputs],
   );
-  const isCropEnabled = activeSensorProfile?.key === "sentinel_1" && (inputs.enable_crop ?? "").trim().toLowerCase() !== "false";
   const activeSteps = useMemo(() => (defaults ? selectedSteps(defaults, inputs) : []), [defaults, inputs]);
   const activeStepKeys = useMemo(() => new Set(activeSteps.map((step) => step.key)), [activeSteps]);
   const workflowSteps = useMemo(() => (defaults ? processingSteps(defaults, inputs) : []), [defaults, inputs]);
   const requiredProgressKeys = useMemo(() => {
     if (!defaults) return [];
 
-    return requiredKeysForSelectedSteps(defaults, inputs, isCropEnabled);
-  }, [defaults, inputs, isCropEnabled]);
+    return requiredKeysForSelectedSteps(defaults, inputs);
+  }, [defaults, inputs]);
   const activeDefaultKeys = useMemo(() => {
     if (!defaults) return [];
 
@@ -549,7 +543,6 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     );
     if (needsCommandEnvironment) addUnique(keys, "env_scripts");
 
-    if (activeStepKeys.has("crop_rslc")) addUnique(keys, "enable_crop");
     activeDefaultKeys.filter((key) => METHOD_INPUT_KEYS.includes(key)).forEach((key) => addUnique(keys, key));
 
     return keys;
@@ -567,8 +560,8 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     [activeFieldKeys, allPrimaryFields],
   );
   const cropFields = useMemo(
-    () => (activeStepKeys.has("crop_rslc") && isCropEnabled ? (defaults?.crop_inputs ?? []) : []),
-    [activeStepKeys, defaults, isCropEnabled],
+    () => (activeStepKeys.has("crop_rslc") ? (defaults?.crop_inputs ?? []) : []),
+    [activeStepKeys, defaults],
   );
   const workflowStartIndex = workflowSteps.findIndex((step) => step.key === inputs.workflow_start);
   const workflowEndOptions = workflowSteps.filter((_, index) => index >= Math.max(0, workflowStartIndex));
@@ -636,7 +629,7 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
       workflow_start: profile.workflow_steps[0] ?? "",
       workflow_end: profile.workflow_steps.at(-1) ?? "",
       coregistration_method: profile.default_coregistration_method ?? "",
-      enable_crop: profile.key === "sentinel_1" ? current.enable_crop || "true" : "false",
+      enable_crop: profile.key === "sentinel_1" ? "true" : "false",
     }));
     setCreatedTask(null);
     setJob(null);

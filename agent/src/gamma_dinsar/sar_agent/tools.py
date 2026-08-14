@@ -374,9 +374,6 @@ class AgentTools:
     def run_slc_copy_crop_all_real(self) -> str:
         inputs = self._inputs()
 
-        if not inputs.get("enable_crop", True):
-            return "跳过裁剪：enable_crop=false"
-
         required = [
             "list_file",
             "coreg_dir",

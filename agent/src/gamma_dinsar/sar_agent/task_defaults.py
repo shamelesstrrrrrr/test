@@ -29,7 +29,6 @@ DEFAULT_PARAMETER_GROUPS: dict[str, dict[str, tuple[Any, str]]] = {
         "bn_end3": ("", "第三组 burst 结束编号；留空表示不使用第三组。"),
     },
     "裁剪": {
-        "enable_crop": (True, "是否执行 RSLC 裁剪；启用后 crop_* 必须由预览图或人工框选给出。"),
         "data_format": ("-", "SLC_copy 数据格式；- 表示使用 GAMMA 默认。"),
         "scale_factor": ("-", "SLC_copy 比例因子；- 表示使用 GAMMA 默认。"),
     },
@@ -131,7 +130,6 @@ USER_VISIBLE_OPTIONAL_INPUTS: dict[str, str] = {
     "satellite": "数据类型选择，图文流程示例为 S1A；如果数据是 S1B 必须改。",
     "polarization": "极化方式选择，图文流程示例为 VV；如果处理 VH 必须改。",
     "swath": "子波束选择，图文流程示例为 IW1；不同研究区经常需要改。",
-    "enable_crop": "是否执行裁剪，默认 true；如果不裁剪需要改成 false。",
     "diff_method": "差分干涉方法选择，默认 initial。",
     "shp_method": "SHP 同质像元方法选择，默认 HTCI。",
     "phase_opt_method": "相位优化方法选择，默认 evd_sbas_single。",
@@ -153,7 +151,6 @@ FIELD_OPTIONS: dict[str, list[str]] = {
     "satellite": ["S1A", "S1B"],
     "polarization": ["VV", "VH"],
     "swath": ["IW1", "IW2", "IW3", "IW1+IW2", "IW1+IW3", "IW2+IW3", "IW1+IW2+IW3"],
-    "enable_crop": ["true", "false"],
     "diff_method": ["initial", "fourier", "unwrapped_ls"],
     "shp_method": ["HTCI", "tTest", "KSTest", "ADTest2", "GLRtest"],
     "phase_opt_method": [
@@ -337,6 +334,10 @@ def apply_derived_codes(inputs: dict[str, Any]) -> dict[str, Any]:
             resolved["coregistration_method"] = profile.default_coregistration_method
         return resolved
 
+    # Sentinel-1 processing always produces a cropped RSLC workspace. Crop
+    # bounds remain user-supplied, but legacy YAML cannot disable this step.
+    resolved["enable_crop"] = True
+
     if not resolved.get("satellite_code") and resolved.get("satellite"):
         resolved["satellite_code"] = _normalize_option(
             resolved["satellite"], SATELLITE_OPTIONS, "卫星类型"
@@ -427,12 +428,6 @@ def _has_value(value: Any) -> bool:
     return str(value).strip() != ""
 
 
-def _is_crop_enabled(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() not in {"0", "false", "no", "off", "否", "不", "none"}
-
-
 def describe_code_defaults() -> str:
     lines = [
         "# 当前代码默认参数",
@@ -456,7 +451,7 @@ def describe_code_defaults() -> str:
         lines.append(f"| `{key}` | {description} |")
     lines.append("")
 
-    lines.append("## 启用裁剪时必须由用户提供")
+    lines.append("## 裁剪时必须由用户提供")
     lines.append("| 字段 | 说明 |")
     lines.append("| --- | --- |")
     for key, description in CROP_REQUIRED_INPUTS.items():
@@ -554,7 +549,7 @@ def missing_required_inputs(inputs: dict[str, Any]) -> list[str]:
     effective = resolve_effective_inputs(inputs)
     missing = [key for key in REQUIRED_USER_INPUTS if not _has_value(effective.get(key))]
 
-    if _is_crop_enabled(effective.get("enable_crop", True)):
+    if get_sensor_profile(effective.get("sensor_profile")).key == "sentinel_1":
         missing.extend(key for key in CROP_REQUIRED_INPUTS if not _has_value(effective.get(key)))
 
     return missing
@@ -576,7 +571,6 @@ def minimal_config_template() -> dict[str, Any]:
         "swath": DEFAULT_TASK_PARAMETERS["swath"],
         "bn_start1": "<BURST_START>",
         "bn_end1": "<BURST_END>",
-        "enable_crop": DEFAULT_TASK_PARAMETERS["enable_crop"],
         "diff_method": DEFAULT_TASK_PARAMETERS["diff_method"],
         "shp_method": DEFAULT_TASK_PARAMETERS["shp_method"],
         "phase_opt_method": DEFAULT_TASK_PARAMETERS["phase_opt_method"],

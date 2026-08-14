@@ -81,7 +81,7 @@ PROCESSING_STEPS: tuple[ProcessingStepSpec, ...] = (
         "run_slc_copy_crop_all_real",
         "按人工确认的范围裁剪 RSLC。",
         ("task_root", "env_scripts", "master_date", "polarization", "swath"),
-        ("enable_crop", "data_format", "scale_factor"),
+        ("data_format", "scale_factor"),
     ),
     ProcessingStepSpec(
         "stage_rslc",
@@ -264,12 +264,6 @@ def _has_value(value: Any) -> bool:
     return value is not None and str(value).strip() != ""
 
 
-def _is_crop_enabled(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() not in {"0", "false", "no", "off", "否", "不", "none"}
-
-
 def default_start_step(sensor_profile: Any = None) -> str:
     return steps_for_sensor(sensor_profile)[0].key
 
@@ -390,7 +384,7 @@ def required_field_keys_for_steps(
         for key in step.required_inputs:
             add(key)
 
-        if step.key == "crop_rslc" and _is_crop_enabled(inputs.get("enable_crop", True)):
+        if step.key == "crop_rslc":
             for key in ("crop_roff", "crop_nr", "crop_loff", "crop_nl"):
                 add(key)
 
