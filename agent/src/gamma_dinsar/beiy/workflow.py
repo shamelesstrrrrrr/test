@@ -142,6 +142,9 @@ class S1PreprocessingWorkflow:
     def _normalize_inputs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(kwargs)
 
+        if str(normalized.get("sensor_profile") or self.state.inputs.get("sensor_profile") or "sentinel_1") != "sentinel_1":
+            return normalized
+
         if "satellite" in normalized:
             satellite = normalized.pop("satellite")
             normalized["satellite"] = satellite

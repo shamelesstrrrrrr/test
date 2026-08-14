@@ -1050,6 +1050,59 @@ button {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.sensor-profile-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 10px;
+  border: 1px solid #c8ded5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f6fbf8;
+}
+
+.sensor-profile-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 2px;
+}
+
+.sensor-profile-evidence > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: baseline;
+}
+
+.sensor-profile-evidence strong {
+  color: #174f3d;
+  font-size: 13px;
+}
+
+.sensor-profile-evidence span,
+.sensor-profile-evidence p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sensor-command-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sensor-command-chips code {
+  border: 1px solid #b9d9ca;
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: #12573d;
+  background: #ffffff;
+  font-size: 12px;
+}
+
 .selected-step-strip {
   display: flex;
   flex-wrap: wrap;
@@ -1943,6 +1996,7 @@ button {
 
   .processing-field-grid,
   .processing-field-grid.compact,
+  .sensor-profile-card,
   .notification-input-grid {
     grid-template-columns: 1fr;
   }

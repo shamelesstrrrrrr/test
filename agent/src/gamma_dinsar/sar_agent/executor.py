@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import re
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
+
+from sensor_profiles import get_sensor_profile
 
 
 BUNDLED_SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
@@ -39,6 +42,288 @@ class LocalCommandExecutor:
         parts.append(command)
 
         return " && ".join(parts)
+
+    def _run_profile_command(
+        self,
+        command: str,
+        *,
+        cwd: Path,
+        timeout: int = 3600,
+        success_title: str,
+    ) -> str:
+        shell_command = self._build_shell_command(command)
+        print(f">>> command={command}", flush=True)
+        result = subprocess.run(
+            ["bash", "-lc", shell_command],
+            cwd=str(cwd),
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+        combined_output = f"{result.stdout}\n{result.stderr}"
+        if result.returncode != 0 or self._has_error_output(combined_output):
+            return (
+                f"{success_title}失败。\n"
+                f"returncode={result.returncode}\n"
+                f"stdout:\n{result.stdout[-4000:]}\n"
+                f"stderr:\n{result.stderr[-4000:]}"
+            )
+        return (
+            f"{success_title}完成。\n"
+            f"stdout:\n{result.stdout[-2000:]}\n"
+            f"stderr:\n{result.stderr[-2000:]}"
+        )
+
+    def prepare_sensor_raw_data(self, raw_data_dir: str, slc_dir: str) -> str:
+        source = Path(raw_data_dir).expanduser()
+        destination = Path(slc_dir).expanduser()
+
+        if not source.is_dir():
+            return f"已解压原始数据目录不存在或不是目录：{source}"
+
+        try:
+            if source.resolve() == destination.resolve():
+                return "原始数据目录不能与任务 SLC 目录相同，以免修改用户原始数据。"
+        except OSError:
+            pass
+
+        if destination.exists() and any(destination.iterdir()):
+            return f"任务 SLC 目录已存在内容，未覆盖：{destination}"
+
+        destination.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        try:
+            for item in source.iterdir():
+                target = destination / item.name
+                if item.is_dir():
+                    shutil.copytree(item, target)
+                else:
+                    shutil.copy2(item, target)
+                copied += 1
+        except Exception as exc:
+            return f"复制原始数据副本失败：{exc}"
+
+        return f"已复制 {copied} 项原始数据到任务 SLC 目录：{destination}"
+
+    def _write_date_list(self, slc_dir: Path, list_file: Path) -> str:
+        dates = sorted(
+            item.name
+            for item in slc_dir.iterdir()
+            if item.is_dir() and re.fullmatch(r"\d{8}", item.name)
+        )
+        if not dates:
+            return f"未在 SLC 目录中找到 YYYYMMDD 日期目录：{slc_dir}"
+        list_file.parent.mkdir(parents=True, exist_ok=True)
+        list_file.write_text("\n".join(dates) + "\n", encoding="utf-8")
+        return f"已生成日期列表：{list_file}（{len(dates)} 景）"
+
+    def run_sensor_slc_normal(
+        self,
+        sensor_profile: str,
+        slc_dir: str,
+        list_file: str,
+        polarization: str = "",
+        timeout: int = 3600,
+    ) -> str:
+        profile = get_sensor_profile(sensor_profile)
+        slc_path = Path(slc_dir).expanduser()
+        if profile.key == "sentinel_1":
+            return "Sentinel-1 不使用通用 SLC 生成入口。"
+        if not slc_path.is_dir():
+            return f"任务 SLC 目录不存在：{slc_path}"
+        if not profile.preprocessing_wrapper:
+            return f"{profile.title} 未配置 SLC 封装脚本。"
+
+        commands: list[str] = []
+        if profile.key == "envisat_asar":
+            commands.append(f"ENVISAT_mkdir {shlex.quote(str(slc_path))}")
+        elif profile.key == "ers_ims":
+            commands.append(f"ERS_mkdir {shlex.quote(str(slc_path))}")
+
+        args = [profile.preprocessing_wrapper, str(slc_path)]
+        if profile.polarization_options:
+            code = profile.polarization_code(polarization)
+            if code is None:
+                options = "/".join(profile.polarization_options)
+                return f"{profile.short_title} 的 polarization 无效：{polarization}。可选：{options}"
+            args.append(code)
+        commands.append(" ".join(shlex.quote(value) for value in args))
+
+        result = self._run_profile_command(
+            " && ".join(commands),
+            cwd=slc_path,
+            timeout=timeout,
+            success_title=f"{profile.short_title} SLC 生成",
+        )
+        if "失败" in result:
+            return result
+        return result + "\n" + self._write_date_list(slc_path, Path(list_file).expanduser())
+
+    def run_sensor_orbit(
+        self,
+        sensor_profile: str,
+        slc_dir: str,
+        orbit_dir: str,
+        timeout: int = 3600,
+    ) -> str:
+        profile = get_sensor_profile(sensor_profile)
+        if not profile.needs_orbit_dir or not profile.orbit_wrapper:
+            return f"{profile.short_title} 不需要单独执行精密轨道封装步骤。"
+        slc_path = Path(slc_dir).expanduser()
+        orbit_path = Path(orbit_dir).expanduser()
+        if not slc_path.is_dir():
+            return f"SLC 目录不存在：{slc_path}"
+        if not orbit_path.is_dir():
+            return f"精密轨道目录不存在：{orbit_path}"
+        command = " ".join(
+            shlex.quote(value)
+            for value in (profile.orbit_wrapper, str(slc_path), str(orbit_path))
+        )
+        return self._run_profile_command(
+            command,
+            cwd=slc_path,
+            timeout=timeout,
+            success_title=f"{profile.short_title} 精密轨道校正",
+        )
+
+    def run_sensor_slc_geo(
+        self,
+        sensor_profile: str,
+        geo_dir: str,
+        slc_file: str,
+        dem_file: str,
+        range_looks: str,
+        azimuth_looks: str,
+        lat_ovr: str,
+        lon_ovr: str,
+        timeout: int = 3600,
+    ) -> str:
+        profile = get_sensor_profile(sensor_profile)
+        geo_path = Path(geo_dir).expanduser()
+        slc_path = Path(slc_file).expanduser()
+        dem_path = Path(dem_file).expanduser()
+        if not profile.geo_wrapper:
+            return f"{profile.short_title} 未配置地理编码封装脚本。"
+        if not slc_path.is_file():
+            return f"待地理编码的 SLC 文件不存在：{slc_path}"
+        if not dem_path.is_file():
+            return f"DEM 文件不存在：{dem_path}"
+        geo_path.mkdir(parents=True, exist_ok=True)
+
+        args = [
+            profile.geo_wrapper,
+            str(geo_path),
+            str(slc_path),
+            str(dem_path),
+            str(range_looks),
+            str(azimuth_looks),
+        ]
+        if profile.geo_uses_oversampling:
+            args.extend((str(lat_ovr), str(lon_ovr)))
+        command = " ".join(shlex.quote(value) for value in args)
+        return self._run_profile_command(
+            command,
+            cwd=geo_path,
+            timeout=timeout,
+            success_title=f"{profile.short_title} SLC 地理编码",
+        )
+
+    def run_sensor_coregistration(
+        self,
+        sensor_profile: str,
+        slc_dir: str,
+        list_file: str,
+        geo_dir: str,
+        coreg_dir: str,
+        master_date: str,
+        polarization: str = "",
+        method: str = "",
+        timeout: int = 7200,
+    ) -> str:
+        profile = get_sensor_profile(sensor_profile)
+        slc_path = Path(slc_dir).expanduser()
+        list_path = Path(list_file).expanduser()
+        geo_path = Path(geo_dir).expanduser()
+        coreg_path = Path(coreg_dir).expanduser()
+        selected_method = method or profile.default_coregistration_method or ""
+
+        if not slc_path.is_dir() or not list_path.is_file():
+            return f"影像配准前置数据不完整：slc_dir={slc_path}，list_file={list_path}"
+        coreg_path.mkdir(parents=True, exist_ok=True)
+
+        if profile.key == "alos_palsar":
+            if selected_method == "dem_lookup":
+                args = ("ALOS_SLC_COREG_DEM", str(slc_path), str(geo_path), str(list_path), str(coreg_path))
+            else:
+                args = ("ALOS_SLC_COREG", str(slc_path), str(list_path), str(coreg_path), str(geo_path))
+        elif profile.key == "terrasar_x":
+            ref = slc_path / str(master_date) / f"{master_date}.slc"
+            args = ("TX_SLC_COREG", str(slc_path), str(list_path), str(ref), str(coreg_path))
+        elif profile.key == "gf3":
+            ref = slc_path / str(master_date) / f"{master_date}.slc"
+            args = ("GF3_COREG", str(slc_path), str(list_path), str(coreg_path), str(ref))
+        elif profile.key == "radarsat_2":
+            code = profile.polarization_code(polarization)
+            if code is None:
+                options = "/".join(profile.polarization_options)
+                return f"RADARSAT-2 的 polarization 无效：{polarization}。可选：{options}"
+            args = ("RADA2_SLC_COREG", str(slc_path), str(list_path), str(coreg_path), str(geo_path), code)
+        elif profile.key == "envisat_asar":
+            args = ("ENVISAT_coreg", str(coreg_path), str(geo_path), str(slc_path), str(list_path))
+        elif profile.key == "ers_ims":
+            if selected_method == "cross_correlation":
+                ref = slc_path / str(master_date) / f"{master_date}.slc"
+                args = ("ERS_COREG_CC", str(slc_path), str(list_path), str(ref), str(coreg_path))
+            else:
+                args = ("ERS_COREG_DEM", str(coreg_path), str(geo_path), str(slc_path), str(list_path))
+        else:
+            return f"{profile.short_title} 未配置通用配准封装调用。"
+
+        command = " ".join(shlex.quote(value) for value in args)
+        return self._run_profile_command(
+            command,
+            cwd=coreg_path,
+            timeout=timeout,
+            success_title=f"{profile.short_title} 影像配准（{selected_method}）",
+        )
+
+    def stage_sensor_rslc(
+        self,
+        coreg_dir: str,
+        list_file: str,
+        crop_dir: str,
+        timeout: int = 30,
+    ) -> str:
+        del timeout
+        coreg_path = Path(coreg_dir).expanduser()
+        list_path = Path(list_file).expanduser()
+        stage_path = Path(crop_dir).expanduser()
+        if not coreg_path.is_dir() or not list_path.is_file():
+            return f"整理 RSLC 前置数据不完整：coreg_dir={coreg_path}，list_file={list_path}"
+
+        dates = [line.strip() for line in list_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not dates:
+            return f"日期列表为空：{list_path}"
+        if stage_path.exists() and any(stage_path.iterdir()):
+            return f"RSLC 整理输出目录已存在内容，未覆盖：{stage_path}"
+        stage_path.mkdir(parents=True, exist_ok=True)
+
+        missing: list[str] = []
+        for date in dates:
+            source_dir = coreg_path / date
+            source_slc = source_dir / f"{date}.rslc"
+            source_par = source_dir / f"{date}.rslc.par"
+            if not source_slc.is_file() or not source_par.is_file():
+                missing.extend(str(path) for path in (source_slc, source_par) if not path.is_file())
+                continue
+            destination_dir = stage_path / date
+            destination_dir.mkdir(parents=True, exist_ok=False)
+            (destination_dir / source_slc.name).symlink_to(source_slc)
+            (destination_dir / source_par.name).symlink_to(source_par)
+
+        if missing:
+            return "整理 RSLC 失败，缺少以下配准结果：\n" + "\n".join(missing)
+        return f"已将 {len(dates)} 景 RSLC 整理到：{stage_path}"
 
     def run_unzip_s1(
         self,

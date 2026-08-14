@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .processing_workflow import resolve_workflow_steps
 from .processing import consume_runtime_notification_from_environment, send_processing_notification
 
@@ -111,7 +113,9 @@ def run_job(
     workflow: str,
     notification: dict[str, str] | None = None,
 ) -> int:
-    steps = resolve_workflow_steps(workflow)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    sensor_profile = config.get("sensor_profile", "sentinel_1")
+    steps = resolve_workflow_steps(workflow, sensor_profile)
 
     job = load_job(job_path)
     job["status"] = "running"

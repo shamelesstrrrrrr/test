@@ -24,9 +24,11 @@ from .schemas import (
     ProcessingFieldInfo,
     ProcessingMissingField,
     ProcessingJobResponse,
+    ProcessingSensorProfile,
     ProcessingTaskResponse,
 )
 from .processing_workflow import (
+    all_workflow_step_payloads,
     default_field_keys_for_steps,
     resolve_workflow_steps,
     required_field_keys_for_steps,
@@ -51,6 +53,7 @@ from task_defaults import (  # noqa: E402
     minimal_config_template,
     resolve_effective_inputs,
 )
+from sensor_profiles import get_sensor_profile, sensor_profile_payloads  # noqa: E402
 from notifier import send_qq_mail_with_credentials  # noqa: E402
 
 
@@ -181,10 +184,12 @@ CROP_DEPENDENT_ARTIFACTS = (
 # They are moved into task_root/archive before the worker starts, which prevents
 # failed remnants from being mixed with a new run while retaining recoverability.
 AUTO_RESET_ARTIFACTS_BY_START = {
+    "prepare_sensor_raw": ("SLC", "GEO", "RSLC", *CROP_DEPENDENT_ARTIFACTS),
     "unzip_s1": ("SLC", "SLC_select", "GEO", "RSLC", *CROP_DEPENDENT_ARTIFACTS),
     "extract_burst": ("SLC_select", "GEO", "RSLC", *CROP_DEPENDENT_ARTIFACTS),
     "slc_geo": ("GEO", "RSLC", *CROP_DEPENDENT_ARTIFACTS),
     "coregistration": ("RSLC", *CROP_DEPENDENT_ARTIFACTS),
+    "stage_rslc": CROP_DEPENDENT_ARTIFACTS,
     "crop_rslc": CROP_DEPENDENT_ARTIFACTS,
     "write_rslc_tab": CROP_DEPENDENT_ARTIFACTS[1:],
     "base_calc": CROP_DEPENDENT_ARTIFACTS[2:],
@@ -290,9 +295,9 @@ def _field_descriptions() -> dict[str, str]:
     return descriptions
 
 
-def _step_payloads_for_workflow(workflow: str) -> list[dict[str, Any]]:
-    keys = {step.key for step in resolve_workflow_steps(workflow)}
-    return [step for step in workflow_step_payloads() if step["key"] in keys]
+def _step_payloads_for_workflow(workflow: str, sensor_profile: Any = None) -> list[dict[str, Any]]:
+    keys = {step.key for step in resolve_workflow_steps(workflow, sensor_profile)}
+    return [step for step in workflow_step_payloads(sensor_profile) if step["key"] in keys]
 
 
 def _missing_fields(inputs: dict[str, Any], required_field_keys: list[str]) -> list[ProcessingMissingField]:
@@ -319,7 +324,7 @@ def _workflow_config(
     default_field_keys: list[str],
 ) -> dict[str, Any]:
     keys: list[str] = []
-    for key in ("task_id", "workflow_start", "workflow_end"):
+    for key in ("task_id", "sensor_profile", "workflow_start", "workflow_end"):
         _add_unique(keys, key)
     for key in [*required_field_keys, *default_field_keys]:
         _add_unique(keys, key)
@@ -369,8 +374,9 @@ def get_processing_defaults(settings: BackendSettings) -> ProcessingDefaultsResp
         crop_inputs=_field_list(CROP_REQUIRED_INPUTS),
         visible_optional_inputs=_field_list(USER_VISIBLE_OPTIONAL_INPUTS),
         default_groups=default_groups,
-        processing_steps=workflow_step_payloads(),
-        workflow_presets=workflow_preset_payloads(),
+        processing_steps=all_workflow_step_payloads(),
+        workflow_presets=workflow_preset_payloads("sentinel_1"),
+        sensor_profiles=[ProcessingSensorProfile(**profile) for profile in sensor_profile_payloads()],
         minimal_template=template,
         minimal_template_yaml=_dump_yaml(template),
     )
@@ -381,9 +387,10 @@ def preview_processing_config(settings: BackendSettings, inputs: dict[str, Any])
     template = minimal_config_template()
     workflow_seed = dict(template)
     workflow_seed.update(normalized)
+    sensor_profile = get_sensor_profile(workflow_seed.get("sensor_profile")).key
     workflow = workflow_from_inputs(workflow_seed)
-    workflow_start, workflow_end = workflow_to_range(workflow)
-    selected_steps = resolve_workflow_steps(workflow)
+    workflow_start, workflow_end = workflow_to_range(workflow, sensor_profile)
+    selected_steps = resolve_workflow_steps(workflow, sensor_profile)
     effective_parameters = resolve_effective_inputs(normalized)
     required_field_keys = required_field_keys_for_steps(selected_steps, effective_parameters)
     default_field_keys = default_field_keys_for_steps(selected_steps, effective_parameters)
@@ -406,7 +413,7 @@ def preview_processing_config(settings: BackendSettings, inputs: dict[str, Any])
         workflow=workflow,
         workflow_start=workflow_start,
         workflow_end=workflow_end,
-        selected_steps=_step_payloads_for_workflow(workflow),
+        selected_steps=_step_payloads_for_workflow(workflow, sensor_profile),
         required_field_keys=required_field_keys,
         execution_enabled=settings.processing_execution_enabled,
         safety_notice=_safety_notice(settings),
@@ -494,10 +501,11 @@ def read_processing_task(settings: BackendSettings, task_id: str) -> ProcessingT
     missing = [ProcessingMissingField(**field) for field in metadata.get("missing", [])]
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     workflow = metadata.get("workflow") or workflow_from_inputs(config)
-    workflow_start, workflow_end = workflow_to_range(workflow)
-    selected_steps = metadata.get("selected_steps") or _step_payloads_for_workflow(workflow)
+    sensor_profile = get_sensor_profile(config.get("sensor_profile")).key
+    workflow_start, workflow_end = workflow_to_range(workflow, sensor_profile)
+    selected_steps = metadata.get("selected_steps") or _step_payloads_for_workflow(workflow, sensor_profile)
     required_field_keys = metadata.get("required_field_keys") or required_field_keys_for_steps(
-        resolve_workflow_steps(workflow),
+        resolve_workflow_steps(workflow, sensor_profile),
         resolve_effective_inputs(_normalize_inputs(config)),
     )
 
@@ -545,15 +553,18 @@ def _read_job(settings: BackendSettings, job_path: Path) -> ProcessingJobRespons
 
 
 def _resolved_workflow_for_task(task: ProcessingTaskResponse, workflow: str) -> str:
+    config = yaml.safe_load(Path(task.config_path).read_text(encoding="utf-8")) or {}
+    sensor_profile = get_sensor_profile(config.get("sensor_profile")).key
     if workflow and workflow != "configured":
-        workflow_to_range(workflow)
+        workflow_to_range(workflow, sensor_profile)
         return workflow
     return task.workflow
 
 
 def _missing_for_task_workflow(task: ProcessingTaskResponse, workflow: str) -> list[ProcessingMissingField]:
     effective = _effective_inputs_for_task(task)
-    required_keys = required_field_keys_for_steps(resolve_workflow_steps(workflow), effective)
+    sensor_profile = get_sensor_profile(effective.get("sensor_profile")).key
+    required_keys = required_field_keys_for_steps(resolve_workflow_steps(workflow, sensor_profile), effective)
     return _missing_fields(effective, required_keys)
 
 
@@ -572,7 +583,8 @@ def _job_log_path_for_task(task: ProcessingTaskResponse, job_id: str) -> Path:
 
 def _archive_existing_outputs_for_workflow(inputs: dict[str, Any], workflow: str) -> tuple[str | None, list[str]]:
     """Archive outputs invalidated by the selected workflow start step."""
-    workflow_start, _ = workflow_to_range(workflow)
+    sensor_profile = get_sensor_profile(inputs.get("sensor_profile")).key
+    workflow_start, _ = workflow_to_range(workflow, sensor_profile)
     task_root_value = str(inputs.get("task_root") or "").strip()
     if not task_root_value or _is_placeholder(task_root_value):
         return None, []
@@ -598,9 +610,12 @@ def _archive_existing_outputs_for_workflow(inputs: dict[str, Any], workflow: str
         slc_dir = task_root / "SLC"
         if slc_dir.is_dir():
             for child in sorted(slc_dir.iterdir()):
-                if re.fullmatch(r"\d{8}", child.name) and (child / "SLC_tab").is_file():
+                if re.fullmatch(r"\d{8}", child.name) and (
+                    sensor_profile != "sentinel_1" or (child / "SLC_tab").is_file()
+                ):
                     sources.append((child, Path("SLC_generated") / child.name))
-        for artifact in AUTO_RESET_ARTIFACTS_BY_START["extract_burst"]:
+        reset_source = "extract_burst" if sensor_profile == "sentinel_1" else "slc_geo"
+        for artifact in AUTO_RESET_ARTIFACTS_BY_START[reset_source]:
             source = task_root / artifact
             if source.exists() or source.is_symlink():
                 sources.append((source, Path(artifact)))
@@ -690,7 +705,7 @@ def create_processing_job(
     if auto_archive_path:
         log_path.write_text(
             "自动归档旧结果后重算。\n"
-            f"处理起点：{workflow_to_range(resolved_workflow)[0]}\n"
+            f"处理起点：{workflow_to_range(resolved_workflow, effective.get('sensor_profile'))[0]}\n"
             f"归档目录：{auto_archive_path}\n"
             f"已归档：{', '.join(auto_archived_items)}\n\n",
             encoding="utf-8",

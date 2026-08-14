@@ -7,6 +7,7 @@ import yaml
 
 from src.gamma_dinsar.beiy.workflow import S1PreprocessingWorkflow
 from executor import LocalCommandExecutor
+from sensor_profiles import get_sensor_profile
 from task_defaults import (
     apply_derived_codes,
     apply_derived_paths,
@@ -125,6 +126,19 @@ class AgentTools:
         inputs = self._inputs()
         return LocalCommandExecutor(env_scripts=inputs.get("env_scripts", []))
 
+    def run_prepare_sensor_raw_real(self) -> str:
+        inputs = self._inputs()
+        profile = get_sensor_profile(inputs.get("sensor_profile"))
+        if profile.key == "sentinel_1":
+            return "Sentinel-1 使用 ZIP 解压步骤，不需要复制已解压原始数据。"
+        missing = [key for key in ("raw_data_dir", "slc_dir") if not inputs.get(key)]
+        if missing:
+            return "准备原始数据缺少参数：" + ", ".join(missing)
+        return self._executor().prepare_sensor_raw_data(
+            raw_data_dir=str(inputs["raw_data_dir"]),
+            slc_dir=str(inputs["slc_dir"]),
+        )
+
     def run_unzip_s1_real(self) -> str:
         inputs = self._inputs()
 
@@ -141,6 +155,20 @@ class AgentTools:
 
     def run_generate_slc_real(self) -> str:
         inputs = self._inputs()
+        profile = get_sensor_profile(inputs.get("sensor_profile"))
+
+        if profile.key != "sentinel_1":
+            missing = [key for key in ("slc_dir", "list_file") if not inputs.get(key)]
+            if profile.polarization_options and not inputs.get("polarization"):
+                missing.append("polarization")
+            if missing:
+                return "生成 SLC 缺少参数：" + ", ".join(missing)
+            return self._executor().run_sensor_slc_normal(
+                sensor_profile=profile.key,
+                slc_dir=str(inputs["slc_dir"]),
+                list_file=str(inputs["list_file"]),
+                polarization=str(inputs.get("polarization") or ""),
+            )
 
         required = [
             "unzip_dir",
@@ -189,6 +217,20 @@ class AgentTools:
             bn_end3="" if inputs.get("bn_end3") is None else str(inputs.get("bn_end3")),
         )
 
+    def run_apply_orbit_real(self) -> str:
+        inputs = self._inputs()
+        profile = get_sensor_profile(inputs.get("sensor_profile"))
+        if not profile.needs_orbit_dir:
+            return f"{profile.short_title} 不需要单独执行精密轨道步骤。"
+        missing = [key for key in ("slc_dir", "orbit_dir") if not inputs.get(key)]
+        if missing:
+            return "精密轨道校正缺少参数：" + ", ".join(missing)
+        return self._executor().run_sensor_orbit(
+            sensor_profile=profile.key,
+            slc_dir=str(inputs["slc_dir"]),
+            orbit_dir=str(inputs["orbit_dir"]),
+        )
+
     def run_preprocessing_until_burst(self) -> str:
         inputs = self._inputs()
         logs: list[str] = []
@@ -212,6 +254,7 @@ class AgentTools:
     ################地理编码############################
     def run_slc_geo_real(self) -> str:
         inputs = self._inputs()
+        profile = get_sensor_profile(inputs.get("sensor_profile"))
 
         required = [
             "geo_dir",
@@ -222,6 +265,18 @@ class AgentTools:
 
         if missing:
             return "地理编码缺少参数：" + ", ".join(missing)
+
+        if profile.key != "sentinel_1":
+            return self._executor().run_sensor_slc_geo(
+                sensor_profile=profile.key,
+                geo_dir=str(inputs["geo_dir"]),
+                slc_file=str(inputs["slc_file"]),
+                dem_file=str(inputs["dem_file"]),
+                range_looks=str(inputs.get("range_looks", "1")),
+                azimuth_looks=str(inputs.get("azimuth_looks", "1")),
+                lat_ovr=str(inputs.get("lat_ovr", "5")),
+                lon_ovr=str(inputs.get("lon_ovr", "5")),
+            )
 
         return self._executor().run_slc_geo(
             geo_dir=inputs["geo_dir"],
@@ -235,6 +290,25 @@ class AgentTools:
     ###############影像配准################
     def run_slc_coreg_multi_real(self) -> str:
         inputs = self._inputs()
+        profile = get_sensor_profile(inputs.get("sensor_profile"))
+
+        if profile.key != "sentinel_1":
+            required = ("slc_dir", "list_file", "geo_dir", "coreg_dir", "master_date")
+            missing = [key for key in required if not inputs.get(key)]
+            if profile.polarization_options and not inputs.get("polarization"):
+                missing.append("polarization")
+            if missing:
+                return "影像配准缺少参数：" + ", ".join(missing)
+            return self._executor().run_sensor_coregistration(
+                sensor_profile=profile.key,
+                slc_dir=str(inputs["slc_dir"]),
+                list_file=str(inputs["list_file"]),
+                geo_dir=str(inputs["geo_dir"]),
+                coreg_dir=str(inputs["coreg_dir"]),
+                master_date=str(inputs["master_date"]),
+                polarization=str(inputs.get("polarization") or ""),
+                method=str(inputs.get("coregistration_method") or ""),
+            )
 
         required = [
             "burst_dir",
@@ -333,6 +407,21 @@ class AgentTools:
             crop_nr=str(inputs["crop_nr"]),
             crop_loff=str(inputs["crop_loff"]),
             crop_nl=str(inputs["crop_nl"]),
+        )
+
+    def run_stage_rslc_real(self) -> str:
+        inputs = self._inputs()
+        profile = get_sensor_profile(inputs.get("sensor_profile"))
+        if profile.key == "sentinel_1":
+            return "Sentinel-1 的 RSLC 裁剪步骤已直接生成统一 SLC_copy 目录。"
+        required = ("coreg_dir", "list_file", "crop_dir")
+        missing = [key for key in required if not inputs.get(key)]
+        if missing:
+            return "整理 RSLC 缺少参数：" + ", ".join(missing)
+        return self._executor().stage_sensor_rslc(
+            coreg_dir=str(inputs["coreg_dir"]),
+            list_file=str(inputs["list_file"]),
+            crop_dir=str(inputs["crop_dir"]),
         )
 ######################生成rslc_tab文件#######################
     def write_rslc_tab_from_list_real(self) -> str:

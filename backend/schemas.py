@@ -92,6 +92,24 @@ class ProcessingWorkflowPreset(BaseModel):
     description: str
 
 
+class ProcessingSensorProfile(BaseModel):
+    key: str
+    title: str
+    short_title: str
+    raw_input_key: str
+    raw_input_label: str
+    raw_input_description: str
+    workflow_steps: list[str]
+    preprocessing_wrapper: str | None = None
+    preprocessing_commands: list[str] = Field(default_factory=list)
+    source_scripts: list[str] = Field(default_factory=list)
+    polarization_options: list[str] = Field(default_factory=list)
+    needs_orbit_dir: bool = False
+    coregistration_options: list[str] = Field(default_factory=list)
+    default_coregistration_method: str | None = None
+    note: str = ""
+
+
 class ProcessingDefaultsResponse(BaseModel):
     execution_enabled: bool = False
     safety_notice: str
@@ -101,6 +119,7 @@ class ProcessingDefaultsResponse(BaseModel):
     default_groups: list[ProcessingDefaultGroup]
     processing_steps: list[ProcessingStepInfo]
     workflow_presets: list[ProcessingWorkflowPreset]
+    sensor_profiles: list[ProcessingSensorProfile]
     minimal_template: dict[str, Any]
     minimal_template_yaml: str
 

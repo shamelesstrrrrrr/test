@@ -33,6 +33,7 @@ import {
   type ProcessingFileBrowserResponse,
   type ProcessingFieldInfo,
   type ProcessingStepInfo,
+  type ProcessingSensorProfile,
   type ProcessingTaskResponse,
 } from "./services/processingApi";
 
@@ -49,12 +50,16 @@ const FIELD_LABELS: Record<string, string> = {
   workflow_end: "结束步骤",
   task_root: "Linux 任务根目录",
   raw_zip_dir: "Sentinel-1 ZIP 路径",
+  raw_data_dir: "已解压原始数据目录",
   dem_file: "DEM 文件路径",
   master_date: "主影像日期",
   bn_start1: "Burst 起始编号",
   bn_end1: "Burst 结束编号",
   env_scripts: "Linux 环境脚本",
   matlab_func_dir: "MATLAB 函数目录",
+  orbit_dir: "精密轨道目录",
+  sensor_profile: "卫星数据类型",
+  coregistration_method: "配准方法",
   satellite: "卫星",
   polarization: "极化",
   swath: "子波束",
@@ -70,13 +75,15 @@ const FIELD_LABELS: Record<string, string> = {
   crop_nl: "crop_nl",
 };
 
-const BASIC_INPUT_KEYS = ["task_id", "task_root", "raw_zip_dir", "dem_file", "master_date", "env_scripts", "matlab_func_dir"];
+const BASIC_INPUT_KEYS = ["task_id", "task_root", "raw_zip_dir", "raw_data_dir", "dem_file", "master_date", "orbit_dir", "env_scripts", "matlab_func_dir"];
 const SLC_INPUT_KEYS = ["satellite", "polarization", "swath", "bn_start1", "bn_end1"];
-const METHOD_INPUT_KEYS = ["enable_crop", "diff_method", "shp_method", "phase_opt_method", "point_selection_method", "stamps_mode"];
+const METHOD_INPUT_KEYS = ["coregistration_method", "enable_crop", "diff_method", "shp_method", "phase_opt_method", "point_selection_method", "stamps_mode"];
 const PATH_FIELD_MODES: Record<string, "file" | "directory" | "any"> = {
   task_root: "directory",
   raw_zip_dir: "any",
+  raw_data_dir: "directory",
   dem_file: "file",
+  orbit_dir: "directory",
   env_scripts: "file",
   matlab_func_dir: "directory",
 };
@@ -109,8 +116,17 @@ const FALLBACK_PROCESSING_STEPS: ProcessingStepInfo[] = [
   { key: "stamps_processing", title: "StaMPS 处理", description: "执行 StaMPS 处理。", required_inputs: ["task_root", "env_scripts", "stamps_mode"], default_inputs: ["matlab_command"] },
 ];
 
-function processingSteps(defaults: ProcessingDefaultsResponse) {
-  return defaults.processing_steps?.length ? defaults.processing_steps : FALLBACK_PROCESSING_STEPS;
+function selectedSensorProfile(defaults: ProcessingDefaultsResponse, inputs: Record<string, string>): ProcessingSensorProfile | undefined {
+  const profiles = defaults.sensor_profiles ?? [];
+  return profiles.find((profile) => profile.key === (inputs.sensor_profile || "sentinel_1")) ?? profiles[0];
+}
+
+function processingSteps(defaults: ProcessingDefaultsResponse, inputs: Record<string, string>) {
+  const steps = defaults.processing_steps?.length ? defaults.processing_steps : FALLBACK_PROCESSING_STEPS;
+  const profile = selectedSensorProfile(defaults, inputs);
+  if (!profile) return steps;
+  const allowed = new Set(profile.workflow_steps);
+  return steps.filter((step) => allowed.has(step.key));
 }
 
 function isPlaceholder(value: unknown) {
@@ -173,7 +189,7 @@ function appendPathLine(value: string, path: string) {
 }
 
 function selectedSteps(defaults: ProcessingDefaultsResponse, inputs: Record<string, string>) {
-  const steps = processingSteps(defaults);
+  const steps = processingSteps(defaults, inputs);
   const start = inputs.workflow_start || steps[0]?.key;
   const end = inputs.workflow_end || steps.at(-1)?.key;
   const startIndex = steps.findIndex((step) => step.key === start);
@@ -193,8 +209,24 @@ function requiredKeysForSelectedSteps(
 ) {
   const keys: string[] = [];
   const steps = selectedSteps(defaults, inputs);
+  const profile = selectedSensorProfile(defaults, inputs);
 
   for (const step of steps) {
+    if (profile?.key !== "sentinel_1" && step.key === "generate_slc") {
+      ["task_root", "env_scripts", ...(profile?.polarization_options.length ? ["polarization"] : [])].forEach((key) => addUnique(keys, key));
+      continue;
+    }
+
+    if (profile?.key !== "sentinel_1" && step.key === "coregistration") {
+      ["task_root", "env_scripts"].forEach((key) => addUnique(keys, key));
+      const needsReferenceImage = profile?.key === "terrasar_x"
+        || profile?.key === "gf3"
+        || (profile?.key === "ers_ims" && (inputs.coregistration_method || profile.default_coregistration_method) === "cross_correlation");
+      if (needsReferenceImage) addUnique(keys, "master_date");
+      if ((profile?.coregistration_options.length ?? 0) > 1) addUnique(keys, "coregistration_method");
+      continue;
+    }
+
     step.required_inputs.forEach((key) => addUnique(keys, key));
 
     if (step.key === "crop_rslc" && isCropEnabled) {
@@ -215,9 +247,14 @@ function requiredKeysForSelectedSteps(
 function defaultKeysForSelectedSteps(defaults: ProcessingDefaultsResponse, inputs: Record<string, string>) {
   const keys: string[] = [];
   const steps = selectedSteps(defaults, inputs);
+  const profile = selectedSensorProfile(defaults, inputs);
 
   for (const step of steps) {
     (step.default_inputs ?? []).forEach((key) => addUnique(keys, key));
+
+    if (profile?.key !== "sentinel_1" && step.key === "coregistration") {
+      addUnique(keys, "coregistration_method");
+    }
 
     if (step.key === "diff_workflow") {
       const method = (inputs.diff_method || "initial").toLowerCase();
@@ -243,14 +280,22 @@ function FieldControl({
   onChange,
   onBrowse,
   allowDefault = false,
+  labelOverride,
+  descriptionOverride,
+  optionsOverride,
 }: {
   field: ProcessingFieldInfo;
   value: string;
   onChange: (value: string) => void;
   onBrowse?: (field: ProcessingFieldInfo) => void;
   allowDefault?: boolean;
+  labelOverride?: string;
+  descriptionOverride?: string;
+  optionsOverride?: string[];
 }) {
-  const label = FIELD_LABELS[field.key] ?? field.key;
+  const label = labelOverride ?? FIELD_LABELS[field.key] ?? field.key;
+  const description = descriptionOverride ?? field.description;
+  const options = optionsOverride ?? field.options;
   const defaultText = formatValue(field.default_value);
   const placeholder = allowDefault && field.default_value !== undefined ? `默认：${defaultText}` : `填写 ${field.key}`;
 
@@ -274,12 +319,12 @@ function FieldControl({
           placeholder="/opt/gamma/gamma_env.sh&#10;/opt/stamps/stamps_env.sh"
           rows={3}
         />
-        <small>{field.description}</small>
+        <small>{description}</small>
       </label>
     );
   }
 
-  if (field.options.length > 0) {
+  if (options.length > 0) {
     return (
       <label className="processing-field">
         <span className="field-title-row">
@@ -293,13 +338,13 @@ function FieldControl({
         </span>
         <select value={value} onChange={(event) => onChange(event.target.value)}>
           {allowDefault && <option value="">使用默认：{defaultText}</option>}
-          {field.options.map((option) => (
+          {options.map((option) => (
             <option key={option} value={option}>
               {option}
             </option>
           ))}
         </select>
-        <small>{field.description}</small>
+        <small>{description}</small>
       </label>
     );
   }
@@ -316,7 +361,7 @@ function FieldControl({
         ) : null}
       </span>
       <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
-      <small>{field.description}</small>
+      <small>{description}</small>
     </label>
   );
 }
@@ -477,10 +522,14 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     () => [...(defaults?.required_inputs ?? []), ...(defaults?.visible_optional_inputs ?? [])],
     [defaults],
   );
-  const isCropEnabled = (inputs.enable_crop ?? "").trim().toLowerCase() !== "false";
+  const activeSensorProfile = useMemo(
+    () => (defaults ? selectedSensorProfile(defaults, inputs) : undefined),
+    [defaults, inputs],
+  );
+  const isCropEnabled = activeSensorProfile?.key === "sentinel_1" && (inputs.enable_crop ?? "").trim().toLowerCase() !== "false";
   const activeSteps = useMemo(() => (defaults ? selectedSteps(defaults, inputs) : []), [defaults, inputs]);
   const activeStepKeys = useMemo(() => new Set(activeSteps.map((step) => step.key)), [activeSteps]);
-  const workflowSteps = useMemo(() => (defaults ? processingSteps(defaults) : []), [defaults]);
+  const workflowSteps = useMemo(() => (defaults ? processingSteps(defaults, inputs) : []), [defaults, inputs]);
   const requiredProgressKeys = useMemo(() => {
     if (!defaults) return [];
 
@@ -495,12 +544,16 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     const keys = [...requiredProgressKeys];
 
     addUnique(keys, "task_id");
-    addUnique(keys, "env_scripts");
+    const needsCommandEnvironment = activeSteps.some(
+      (step) => !["unzip_s1", "prepare_sensor_raw"].includes(step.key),
+    );
+    if (needsCommandEnvironment) addUnique(keys, "env_scripts");
 
     if (activeStepKeys.has("crop_rslc")) addUnique(keys, "enable_crop");
+    activeDefaultKeys.filter((key) => METHOD_INPUT_KEYS.includes(key)).forEach((key) => addUnique(keys, key));
 
     return keys;
-  }, [activeStepKeys, requiredProgressKeys]);
+  }, [activeDefaultKeys, activeStepKeys, activeSteps, requiredProgressKeys]);
   const basicFields = useMemo(
     () => fieldsByKeys(allPrimaryFields, BASIC_INPUT_KEYS.filter((key) => activeFieldKeys.includes(key))),
     [activeFieldKeys, allPrimaryFields],
@@ -565,13 +618,37 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
     setJob(null);
   }
 
+  function updateSensorProfile(value: string) {
+    if (!defaults) {
+      updateInput("sensor_profile", value);
+      return;
+    }
+
+    const profile = defaults.sensor_profiles?.find((item) => item.key === value);
+    if (!profile) {
+      updateInput("sensor_profile", value);
+      return;
+    }
+
+    setInputs((current) => ({
+      ...current,
+      sensor_profile: profile.key,
+      workflow_start: profile.workflow_steps[0] ?? "",
+      workflow_end: profile.workflow_steps.at(-1) ?? "",
+      coregistration_method: profile.default_coregistration_method ?? "",
+      enable_crop: profile.key === "sentinel_1" ? current.enable_crop || "true" : "false",
+    }));
+    setCreatedTask(null);
+    setJob(null);
+  }
+
   function updateWorkflowStart(value: string) {
     if (!defaults) {
       updateInput("workflow_start", value);
       return;
     }
 
-    const steps = processingSteps(defaults);
+    const steps = processingSteps(defaults, inputs);
     const nextStartIndex = steps.findIndex((step) => step.key === value);
     const currentEnd = inputs.workflow_end || steps.at(-1)?.key || value;
     const currentEndIndex = steps.findIndex((step) => step.key === currentEnd);
@@ -751,6 +828,40 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
           <div className="processing-body">
             <section className="processing-form-panel">
               <div className="processing-section-heading">
+                <FileCheck2 size={17} />
+                <h3>卫星数据类型</h3>
+              </div>
+              <div className="sensor-profile-card">
+                <label className="processing-field wide">
+                  <span>卫星/产品</span>
+                  <select value={inputs.sensor_profile ?? "sentinel_1"} onChange={(event) => updateSensorProfile(event.target.value)}>
+                    {(defaults?.sensor_profiles ?? []).map((profile) => (
+                      <option key={profile.key} value={profile.key}>
+                        {profile.title}
+                      </option>
+                    ))}
+                  </select>
+                  <small>切换后会重置为该卫星可用的处理步骤；不会把 Sentinel-1 的 Burst 字段套到其他卫星数据上。</small>
+                </label>
+                {activeSensorProfile ? (
+                  <div className="sensor-profile-evidence">
+                    <div>
+                      <strong>{activeSensorProfile.short_title} 封装入口</strong>
+                      <span>{activeSensorProfile.preprocessing_wrapper ?? "当前阶段不需要单独封装入口"}</span>
+                    </div>
+                    {activeSensorProfile.preprocessing_commands.length ? (
+                      <div className="sensor-command-chips" aria-label="已核对的 GAMMA 小命令">
+                        {activeSensorProfile.preprocessing_commands.map((command) => (
+                          <code key={command}>{command}</code>
+                        ))}
+                      </div>
+                    ) : null}
+                    {activeSensorProfile.note ? <p>{activeSensorProfile.note}</p> : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="processing-section-heading">
                 <ServerCog size={17} />
                 <h3>处理范围</h3>
               </div>
@@ -792,7 +903,14 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                 <div className="processing-field-grid">
                   {basicFields.map((field) => (
                     <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
-                      <FieldControl field={field} value={inputs[field.key] ?? ""} onBrowse={openPathBrowser} onChange={(value) => updateInput(field.key, value)} />
+                      <FieldControl
+                        field={field}
+                        value={inputs[field.key] ?? ""}
+                        onBrowse={openPathBrowser}
+                        onChange={(value) => updateInput(field.key, value)}
+                        labelOverride={field.key === activeSensorProfile?.raw_input_key ? activeSensorProfile.raw_input_label : undefined}
+                        descriptionOverride={field.key === activeSensorProfile?.raw_input_key ? activeSensorProfile.raw_input_description : undefined}
+                      />
                     </div>
                   ))}
                 </div>
@@ -807,7 +925,13 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                   <div className="processing-field-grid">
                     {slcFields.map((field) => (
                       <div className={missingKeys.has(field.key) ? "missing-field-wrap" : ""} key={field.key}>
-                        <FieldControl field={field} value={inputs[field.key] ?? ""} onBrowse={openPathBrowser} onChange={(value) => updateInput(field.key, value)} />
+                        <FieldControl
+                          field={field}
+                          value={inputs[field.key] ?? ""}
+                          onBrowse={openPathBrowser}
+                          onChange={(value) => updateInput(field.key, value)}
+                          optionsOverride={field.key === "polarization" && activeSensorProfile?.polarization_options.length ? activeSensorProfile.polarization_options : undefined}
+                        />
                       </div>
                     ))}
                   </div>
@@ -822,7 +946,14 @@ export function ProcessingTaskModal({ onClose, initialInputs, onTaskSaved, onJob
                   </div>
                   <div className="processing-field-grid">
                     {methodFields.map((field) => (
-                      <FieldControl field={field} value={inputs[field.key] ?? ""} onBrowse={openPathBrowser} onChange={(value) => updateInput(field.key, value)} key={field.key} />
+                      <FieldControl
+                        field={field}
+                        value={inputs[field.key] ?? ""}
+                        onBrowse={openPathBrowser}
+                        onChange={(value) => updateInput(field.key, value)}
+                        optionsOverride={field.key === "coregistration_method" ? activeSensorProfile?.coregistration_options : undefined}
+                        key={field.key}
+                      />
                     ))}
                   </div>
                 </>

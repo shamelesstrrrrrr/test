@@ -35,6 +35,24 @@ export interface ProcessingWorkflowPreset {
   description: string;
 }
 
+export interface ProcessingSensorProfile {
+  key: string;
+  title: string;
+  short_title: string;
+  raw_input_key: string;
+  raw_input_label: string;
+  raw_input_description: string;
+  workflow_steps: string[];
+  preprocessing_wrapper?: string | null;
+  preprocessing_commands: string[];
+  source_scripts: string[];
+  polarization_options: string[];
+  needs_orbit_dir: boolean;
+  coregistration_options: string[];
+  default_coregistration_method?: string | null;
+  note: string;
+}
+
 export interface ProcessingDefaultsResponse {
   execution_enabled: boolean;
   safety_notice: string;
@@ -44,6 +62,7 @@ export interface ProcessingDefaultsResponse {
   default_groups: ProcessingDefaultGroup[];
   processing_steps: ProcessingStepInfo[];
   workflow_presets: ProcessingWorkflowPreset[];
+  sensor_profiles: ProcessingSensorProfile[];
   minimal_template: Record<string, unknown>;
   minimal_template_yaml: string;
 }

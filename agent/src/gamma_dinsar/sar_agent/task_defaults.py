@@ -3,8 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from sensor_profiles import get_sensor_profile
+
 
 DEFAULT_PARAMETER_GROUPS: dict[str, dict[str, tuple[Any, str]]] = {
+    "卫星数据类型": {
+        "sensor_profile": (
+            "sentinel_1",
+            "处理数据的卫星/产品类型。切换后，前端只显示该类型真正需要的输入字段和流程步骤。",
+        ),
+        "coregistration_method": (
+            "",
+            "配准策略。为空时采用所选卫星封装脚本的推荐默认策略；不同卫星可选策略不同。",
+        ),
+    },
     "SLC 数据选择": {
         "satellite": ("S1A", "卫星类型；执行时会自动转换为 satellite_code，S1A=0，S1B=1。"),
         "polarization": ("VV", "极化方式；执行时会自动转换为 polarization_code，VV=0，VH=1。"),
@@ -112,6 +124,10 @@ CROP_REQUIRED_INPUTS: dict[str, str] = {
 }
 
 USER_VISIBLE_OPTIONAL_INPUTS: dict[str, str] = {
+    "sensor_profile": "选择待处理的卫星/产品类型。不同类型的原始数据结构、SLC 生成命令和配准方式不同。",
+    "raw_data_dir": "非 Sentinel-1 数据的已解压原始数据目录。处理前会复制到任务目录，避免修改原始数据。",
+    "orbit_dir": "ENVISAT/ERS 精密轨道文件目录；仅相应卫星类型的精轨校正步骤需要。",
+    "coregistration_method": "影像配准方法。前端只显示当前卫星封装脚本中已确认的可选方法。",
     "satellite": "数据类型选择，图文流程示例为 S1A；如果数据是 S1B 必须改。",
     "polarization": "极化方式选择，图文流程示例为 VV；如果处理 VH 必须改。",
     "swath": "子波束选择，图文流程示例为 IW1；不同研究区经常需要改。",
@@ -124,6 +140,16 @@ USER_VISIBLE_OPTIONAL_INPUTS: dict[str, str] = {
 }
 
 FIELD_OPTIONS: dict[str, list[str]] = {
+    "sensor_profile": [
+        "sentinel_1",
+        "alos_palsar",
+        "terrasar_x",
+        "gf3",
+        "radarsat_2",
+        "envisat_asar",
+        "ers_ims",
+    ],
+    "coregistration_method": ["tops_spectral_diversity", "cross_correlation", "dem_lookup"],
     "satellite": ["S1A", "S1B"],
     "polarization": ["VV", "VH"],
     "swath": ["IW1", "IW2", "IW3", "IW1+IW2", "IW1+IW3", "IW2+IW3", "IW1+IW2+IW3"],
@@ -305,6 +331,12 @@ def apply_code_defaults(inputs: dict[str, Any]) -> dict[str, Any]:
 def apply_derived_codes(inputs: dict[str, Any]) -> dict[str, Any]:
     resolved = dict(inputs)
 
+    profile = get_sensor_profile(resolved.get("sensor_profile"))
+    if profile.key != "sentinel_1":
+        if not resolved.get("coregistration_method") and profile.default_coregistration_method:
+            resolved["coregistration_method"] = profile.default_coregistration_method
+        return resolved
+
     if not resolved.get("satellite_code") and resolved.get("satellite"):
         resolved["satellite_code"] = _normalize_option(
             resolved["satellite"], SATELLITE_OPTIONS, "卫星类型"
@@ -332,6 +364,17 @@ def apply_derived_paths(inputs: dict[str, Any]) -> dict[str, Any]:
     if not task_root:
         return resolved
 
+    profile = get_sensor_profile(resolved.get("sensor_profile"))
+
+    if profile.key != "sentinel_1":
+        resolved.setdefault("slc_dir", str(Path(task_root) / "SLC"))
+        resolved.setdefault("unzip_dir", str(Path(task_root) / "SLC"))
+        resolved.setdefault("list_file", str(Path(task_root) / "SLC" / "list"))
+        resolved.setdefault("geo_dir", str(Path(task_root) / "GEO"))
+        resolved.setdefault("coreg_dir", str(Path(task_root) / "RSLC"))
+        resolved.setdefault("crop_dir", str(Path(task_root) / "SLC_copy"))
+        resolved.setdefault("rslc_dir", str(Path(task_root) / "SLC_copy"))
+
     for key, template in DERIVED_PATH_TEMPLATES.items():
         if resolved.get(key):
             continue
@@ -348,6 +391,15 @@ def apply_derived_paths(inputs: dict[str, Any]) -> dict[str, Any]:
             resolved[key] = str(Path(template.format(**resolved)))
         except KeyError:
             continue
+
+    if profile.key != "sentinel_1" and resolved.get("master_date"):
+        master_date = str(resolved["master_date"])
+        pol_suffix = ""
+        if profile.key == "radarsat_2":
+            pol_suffix = f".{str(resolved.get('polarization') or 'VV').lower()}"
+        derived_slc_file = str(Path(resolved["slc_dir"]) / master_date / f"{master_date}{pol_suffix}.slc")
+        if not resolved.get("slc_file") or "SLC_select" in str(resolved["slc_file"]):
+            resolved["slc_file"] = derived_slc_file
 
     return resolved
 
@@ -511,10 +563,12 @@ def missing_required_inputs(inputs: dict[str, Any]) -> list[str]:
 def minimal_config_template() -> dict[str, Any]:
     return {
         "task_id": "example_task",
+        "sensor_profile": "sentinel_1",
         "workflow_start": "unzip_s1",
         "workflow_end": "stamps_processing",
         "task_root": "<TASK_ROOT>",
         "raw_zip_dir": "<SENTINEL_1_ZIP_DIR_OR_FILE>",
+        "raw_data_dir": "<UNPACKED_RAW_DATA_DIRECTORY>",
         "dem_file": "<DEM_FILE>",
         "master_date": "<YYYYMMDD>",
         "satellite": DEFAULT_TASK_PARAMETERS["satellite"],
