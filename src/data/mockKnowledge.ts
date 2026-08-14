@@ -391,9 +391,7 @@ export const initialAssistantMessage: ChatMessage = {
   citations: [],
   content: `## SAR/GAMMA 学习助手
 
-我是一个面向学生的 SAR/GAMMA 知识与流程指导助手。当前只提供 SAR/InSAR 知识、流程说明、命令解释、文件目录建议和占位符代码模板。
-
-如果启用 RAG 后端，我会先检索 GAMMA 手册知识库，再调用对话模型组织回答；无论哪种模式，都不执行 GAMMA、不执行 Shell、不使用 SSH、不连接 MCP Server。`,
+我是一个面向学生的 SAR/GAMMA 影像处理助手，可帮助你学习 SAR/InSAR 知识、理解处理流程和配置数据处理任务。`,
 };
 
 export const seedSessions: ChatSession[] = [

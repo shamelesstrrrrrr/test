@@ -59,7 +59,16 @@ function readStoredSessions() {
 
   try {
     const parsed = JSON.parse(raw) as ChatSession[];
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : seedSessions;
+    if (!Array.isArray(parsed) || parsed.length === 0) return seedSessions;
+
+    return parsed.map((session) => ({
+      ...session,
+      messages: session.messages.map((message) =>
+        message.role === "assistant" && message.content.includes("如果启用 RAG 后端，我会先检索 GAMMA 手册知识库")
+          ? { ...initialAssistantMessage, id: message.id }
+          : message,
+      ),
+    }));
   } catch {
     return seedSessions;
   }
